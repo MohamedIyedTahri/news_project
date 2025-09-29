@@ -5,7 +5,7 @@ from newsbot.cleaner import clean_html
 from newsbot.storage import NewsStorage
 from newsbot.rss_feeds import RSS_FEEDS
 from newsbot.deduplicator import ArticleDeduplicator
-from newsbot.scraper import fetch_full_articles  # Added import
+from newsbot.scraper import fetch_full_articles
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -142,6 +142,107 @@ def save_articles_batch(articles_dict, storage):
         logger.info(f"Category '{category}': {saved_count}/{len(articles)} articles saved")
     
     return stats
+
+# --------------------- Full Content Enrichment & Pipeline -------------------------
+def enrich_database_with_full_articles(storage: NewsStorage, limit: int = 20, min_full_length: int = 800):
+    """Backfill full_content for articles that only have summaries.
+
+    Args:
+        storage: Active NewsStorage instance.
+        limit: Max number of articles to enrich in this run.
+        min_full_length: Minimum length to consider fetched full content valid.
+    """
+    logger.info("Starting enrichment backfill for articles missing full_content")
+    try:
+        cursor = storage.conn.execute(
+            """
+            SELECT id, title, link, publish_date, source, category, content, full_content
+            FROM articles
+            WHERE (full_content IS NULL OR length(full_content)=0)
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            logger.info("No articles require enrichment.")
+            return {"requested": 0, "updated": 0}
+
+        rss_style_articles = []
+        for r in rows:
+            rss_style_articles.append({
+                "title": r[1],
+                "link": r[2],
+                "publish_date": r[3] or "",
+                "source": r[4] or "Unknown",
+                "category": r[5] or "uncategorized",
+                "content": r[6] or "",
+            })
+
+        full_ok, full_fail = fetch_full_articles(rss_style_articles)
+        updated = 0
+        for art in full_ok:
+            if len(art.content) < min_full_length:
+                continue
+            storage.conn.execute(
+                "UPDATE articles SET full_content=? WHERE link=? AND (full_content IS NULL OR length(full_content)=0)",
+                (art.content, art.link),
+            )
+            updated += 1
+        storage.conn.commit()
+
+        stats = {
+            "requested": len(rss_style_articles),
+            "fetched_full": len(full_ok),
+            "failed_full": len(full_fail),
+            "updated": updated,
+        }
+        logger.info(f"Enrichment backfill stats: {stats}")
+        return stats
+    except Exception as e:
+        logger.error(f"Error during enrichment backfill: {e}")
+        return {"requested": 0, "updated": 0, "error": str(e)}
+
+
+def collect_and_store_articles(categories=None, enrich_full: bool = True, batch_enrich_limit: int = 30):
+    """High-level pipeline: fetch RSS summaries, optionally fetch full content, store both.
+
+    If enrich_full is True, attempts to fetch full content immediately for new articles
+    before insertion (best-effort). Full content is saved in 'full_content' column while
+    RSS summary remains in 'content'.
+    """
+    storage = NewsStorage()
+    try:
+        articles_by_cat = fetch_multiple_feeds(categories, use_deduplication=True)
+        # Flatten new articles for optional full fetch
+        if enrich_full:
+            flat = []
+            for cat_list in articles_by_cat.values():
+                flat.extend(cat_list)
+            full_ok, _ = fetch_full_articles(flat)
+            full_map = {fa.link: fa for fa in full_ok}
+        else:
+            full_map = {}
+
+        total_saved = 0
+        for category, articles in articles_by_cat.items():
+            for art in articles:
+                link = art.get("link")
+                full_obj = full_map.get(link)
+                if full_obj:
+                    art["full_content"] = full_obj.content
+                storage.save_article(art)
+                total_saved += 1
+        logger.info(f"Pipeline stored {total_saved} articles (summary + optional full content)")
+
+        # Opportunistic backfill for older rows missing full_content
+        if enrich_full:
+            enrich_stats = enrich_database_with_full_articles(storage, limit=batch_enrich_limit)
+            logger.info(f"Post-ingest backfill completed: {enrich_stats}")
+        return True
+    finally:
+        storage.close()
 
 if __name__ == "__main__":
     try:

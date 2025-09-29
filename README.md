@@ -92,9 +92,6 @@ articles = fetch_rss_feed("http://feeds.bbci.co.uk/news/world/rss.xml", "interna
 from newsbot.storage import NewsStorage
 
 storage = NewsStorage()
-
-# Get database statistics
-stats = storage.get_statistics()
 print(f"Total articles: {stats['total_articles']}")
 print(f"By category: {stats['by_category']}")
 print(f"Top sources: {stats['top_sources']}")
