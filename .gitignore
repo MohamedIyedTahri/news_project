@@ -50,4 +50,7 @@ logs/
 Thumbs.db
 
 # Project specific
-news_articles.db
+news_articles.db# SQLite journaling files
+*.db-shm
+*.db-wal
+
