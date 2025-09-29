@@ -7,6 +7,8 @@ A production-ready, scalable Python application that collects news articles from
 ### Core Capabilities
 - **Real-time streaming architecture**: Apache Kafka-powered message streaming for immediate processing
 - **Extensive RSS feed coverage**: 66+ feeds across 8 categories with RSS_FEEDS_EXTENDED dictionary
+- **Feed policy management**: Allowlist/denylist support with skip-bozo validation for reliable feeds
+- **Extended feed registry**: Curated high-quality feeds for science, health, and specialized content
 - **Feed quality validation**: Built-in validator to identify full-text vs summary-only sources
 - **Intelligent content enrichment**: Full article scraping with fallback mechanisms and retry logic
 - **Advanced text cleaning**: Removes HTML tags, scripts, ads, and excessive whitespace
@@ -14,11 +16,12 @@ A production-ready, scalable Python application that collects news articles from
 - **Production-ready storage**: SQLite with WAL mode, schema migrations, and upsert capabilities
 
 ### Streaming & Scalability
-- **Kafka streaming layer**: Producer/consumer architecture for real-time processing
-- **Dual processing modes**: Synchronous and asynchronous consumer implementations
-- **Horizontal scaling**: Stateless consumers with configurable concurrency
-- **Graceful error handling**: Dead letter topics, retry mechanisms, and circuit breakers
-- **Monitoring & metrics**: Built-in counters with Prometheus integration suggestions
+- **Kafka streaming layer**: Producer/consumer architecture with bootstrap fallback resolution
+- **Dual processing modes**: Synchronous and asynchronous consumer implementations with lz4/gzip compression
+- **Horizontal scaling**: Stateless consumers with configurable concurrency and semaphore control
+- **Graceful error handling**: Dead letter topics, retry mechanisms, and bootstrap hostname fallback
+- **Feed selection policies**: Runtime feed filtering with allowlist/denylist and per-feed limits
+- **Monitoring & metrics**: Built-in counters with database statistics module and coverage tracking
 
 ### Development & Analysis
 - **Comprehensive logging**: Structured logging with configurable levels
@@ -34,6 +37,9 @@ news_project/
 │   ├── __init__.py                   # Package initialization
 │   ├── main.py                       # RSS fetching and batch processing
 │   ├── rss_feeds.py                  # RSS feed URLs configuration
+│   ├── feed_policies.py              # Feed allowlist/denylist management
+│   ├── extended_feed_smoke.py        # Extended feed testing with enrichment
+│   ├── db_stats.py                   # Database statistics and coverage analysis
 │   ├── cleaner.py                    # HTML cleaning and text processing
 │   ├── storage.py                    # SQLite database with migrations
 │   ├── deduplicator.py               # Article deduplication logic
@@ -42,10 +48,10 @@ news_project/
 │   ├── hooks.py                      # Extensibility hooks
 │   ├── smoke_enrich.py               # Enrichment pipeline testing
 │   ├── feed_validator.py             # RSS feed quality validation tool
-│   ├── kafka_utils.py                # Kafka utilities and helpers
+│   ├── kafka_utils.py                # Kafka utilities with bootstrap fallback
 │   ├── kafka_producer.py             # Kafka RSS article producer
 │   ├── kafka_scraper_consumer.py     # Sync Kafka consumer for enrichment
-│   ├── kafka_scraper_async_consumer.py # Async Kafka consumer
+│   ├── kafka_scraper_async_consumer.py # Async Kafka consumer with concurrency
 │   ├── smoke_kafka_run.py            # Manual Kafka pipeline testing
 │   └── tests/                        # Test suite
 │       └── test_kafka_smoke.py       # Kafka integration tests
@@ -169,7 +175,19 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:29092 python -m newsbot.kafka_scraper_consumer
 ### Performance Monitoring
 
 #### Database Statistics
+```bash
+# View per-category full-content coverage
+python -m newsbot.db_stats
+
+# JSON output for scripting
+python -m newsbot.db_stats --json
+
+# Health check with coverage threshold
+python -m newsbot.db_stats --min-coverage 50
+```
+
 ```python
+# Programmatic access
 from newsbot.storage import NewsStorage
 
 storage = NewsStorage()
