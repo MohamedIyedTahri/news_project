@@ -102,6 +102,49 @@ print(f"Top sources: {stats['top_sources']}")
 storage.close()
 ```
 
+## Full Article Scraping (Enrichment)
+After fetching RSS summaries, you can enrich them by downloading the full web pages.
+
+```python
+from newsbot.main import fetch_multiple_feeds
+from newsbot.scraper import fetch_full_articles
+
+# 1. Fetch RSS-level summaries
+all_articles = fetch_multiple_feeds(["tech"], use_deduplication=True)
+tech_articles = all_articles.get("tech", [])[:5]  # sample subset
+
+# 2. Fetch & clean full content
+full_success, full_failed = fetch_full_articles(tech_articles)
+print(f"Full content fetched: {len(full_success)} | Failed: {len(full_failed)}")
+
+# Inspect first article
+if full_success:
+    first = full_success[0]
+    print(first.title)
+    print(first.content[:400], '...')
+```
+
+### Enrichment Helper with Storage & Deduplication
+```python
+from newsbot.scraper import enrich_and_store_full_articles
+from newsbot.storage import NewsStorage
+from newsbot.deduplicator import ArticleDeduplicator
+
+storage = NewsStorage()
+all_articles = fetch_multiple_feeds(["tech"], use_deduplication=True)
+tech_articles = all_articles.get("tech", [])
+
+stats = enrich_and_store_full_articles(tech_articles, storage, deduplicator=ArticleDeduplicator())
+print(stats)
+storage.close()
+```
+
+### Notes
+- Basic heuristic content extraction: looks for common article containers.
+- Falls back to full <body> text if no target block found.
+- Future improvement: integrate readability-lxml or trafilatura for richer extraction.
+- Retries & user-agent rotation included to reduce transient failures.
+
 ## Configuration
 
 ### Adding New RSS Feeds

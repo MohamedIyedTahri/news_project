@@ -5,6 +5,7 @@ from newsbot.cleaner import clean_html
 from newsbot.storage import NewsStorage
 from newsbot.rss_feeds import RSS_FEEDS
 from newsbot.deduplicator import ArticleDeduplicator
+from newsbot.scraper import fetch_full_articles  # Added import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -189,9 +190,21 @@ if __name__ == "__main__":
         print("Top sources:")
         for source, count in list(db_stats.get('top_sources', {}).items())[:5]:
             print(f"  {source}: {count}")
-        
+
+        # === Full Article Enrichment Example ===
+        print("\n=== Full Article Enrichment (First 5 Tech Articles) ===")
+        tech_articles = all_articles.get('tech', [])[:5]
+        if tech_articles:
+            full_success, full_failed = fetch_full_articles(tech_articles)
+            print(f"Fetched full content for {len(full_success)} articles, {len(full_failed)} failed.")
+            # Show a preview of first enriched article
+            if full_success:
+                first = full_success[0]
+                print(f"Title: {first.title}\nFull content preview: {first.content[:300]}...")
+        else:
+            print("No tech articles available for enrichment test.")
+
         storage.close()
-        
     except Exception as e:
         logger.error(f"Fatal error in main execution: {e}")
         print(f"✗ Error: {e}")
