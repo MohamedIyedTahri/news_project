@@ -11,6 +11,7 @@ A scalable Python application that collects news articles from multiple RSS feed
 - **Scalable architecture**: Easy to add new RSS feeds and categories
 - **Comprehensive logging**: Detailed logging for monitoring and debugging
 - **Error handling**: Graceful handling of feed parsing errors and network issues
+- **Embedding evaluation (Week 4)**: Comparative notebook for CBOW, Skip-gram, and DistilBERT embeddings (see Week 4 section)
 
 ## Project Structure
 
@@ -23,6 +24,7 @@ news_project/
 │   ├── cleaner.py           # HTML cleaning and text processing
 │   ├── storage.py           # SQLite database operations
 │   └── deduplicator.py      # Article deduplication logic
+├── notebooks/               # Jupyter notebooks (Week 4 embeddings + earlier labs)
 ├── news_articles.db         # SQLite database (created automatically)
 ├── README.md                # This file
 └── .github/
@@ -226,6 +228,48 @@ The application provides comprehensive logging at different levels:
 - **Memory**: Processes articles in batches to avoid memory issues with large feeds
 - **Network**: Implements connection pooling and timeout handling
 - **Scalability**: Designed to handle hundreds of RSS feeds and thousands of articles
+
+## Week 4: Data Preprocessing & Embedding Comparison
+
+The notebook `notebooks/Week4_Expanded_Data_Comparison.ipynb` (mirrored as `Week4_Data_Preprocessing_and_Embeddings.ipynb`) provides an end-to-end pipeline for evaluating different embedding strategies over the collected news dataset.
+
+### Contents
+1. Data loading from SQLite (`news_articles.db`)
+2. Text cleaning & tokenization (punctuation removal, lowercasing, stopwords, short token filtering)
+3. Training Word2Vec models (CBOW & Skip-gram) with consistent hyperparameters
+4. Generating DistilBERT contextual embeddings (CLS token pooling)
+5. Semantic analysis: vocabulary coverage, nearest neighbors, document similarity
+6. Visualization: PCA projection of Word2Vec spaces
+7. Performance & qualitative comparison + conclusions & presentation summary
+
+### Quick Run
+```bash
+conda activate news-env
+pip install gensim transformers nltk seaborn torch scikit-learn
+jupyter notebook notebooks/Week4_Expanded_Data_Comparison.ipynb
+```
+
+The notebook will auto-download required NLTK corpora (`punkt`, `stopwords`) if missing.
+
+### Model Comparison Summary
+| Model | Training Effort | Contextual Awareness | Strengths | Recommended Use |
+|-------|-----------------|----------------------|-----------|-----------------|
+| CBOW | Fast (seconds) | Local window only | Speed, baseline | Quick exploratory tests |
+| Skip-gram | Moderate | Local window only | Better rare word semantics | Lightweight semantic tasks |
+| DistilBERT | Pretrained inference | Global bidirectional | Rich contextual meaning | Production semantic search/RAG |
+
+### Key Findings
+* DistilBERT embeddings yield superior semantic grouping and handle polysemy.
+* Skip-gram outperforms CBOW on rare/domain-specific tokens.
+* Word2Vec models are fast to train; BERT inference remains feasible for moderate corpus sizes.
+* Subword tokenization (BERT) ensures vocabulary coverage vs OOV limitations in Word2Vec.
+
+### Recommendations
+* Use DistilBERT (or Sentence-BERT in future) for retrieval, clustering, and user-facing semantic tasks.
+* Maintain a Skip-gram Word2Vec model as a fast fallback and for quick exploratory similarity checks.
+* Possible extensions: introduce FastText for OOV handling, add evaluation metrics (intrinsic analogy tests, downstream classification), and integrate a vector database for RAG.
+
+---
 
 ## Extending the Project
 
