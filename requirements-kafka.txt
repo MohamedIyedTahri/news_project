@@ -1,0 +1,10 @@
+# Additional dependencies for Kafka streaming layer
+# Install after activating conda env:  pip install -r requirements-kafka.txt
+
+confluent-kafka>=2.4,<3.0
+aiokafka>=0.10.0,<0.11
+httpx>=0.27,<0.28
+# Existing core deps (listed for completeness; comment out if already installed)
+feedparser
+beautifulsoup4
+requests

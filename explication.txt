@@ -1,0 +1,261 @@
+Group Presentation: Data Preprocessing & Embedding Comparison (News Project)
+==========================================================================
+Total Time: 15 minutes (+ ~1 min buffer)
+Group Members (Example Names – Replace with Real Ones):
+1. Speaker 1 – Intro & Dataset Context (0:00 – 2:30)
+2. Speaker 2 – Preprocessing Pipeline & Stats (2:30 – 5:00)
+3. Speaker 3 – Embedding Models (CBOW, Skip-gram, BERT) (5:00 – 8:30)
+4. Speaker 4 – Results: Similarities, Visualizations, Benchmarks (8:30 – 11:30)
+5. Speaker 5 – Comparison, Limitations, Next Steps, Q&A Setup (11:30 – 14:30)
+Buffer & Transition (14:30 – 15:00)
+
+--------------------------------------------------------------------------
+SPEAKER 1 SCRIPT – INTRO & DATASET CONTEXT
+--------------------------------------------------------------------------
+Objective (Slide / Section 1):
+“Hello, we’re Group <X>. Our Week 4 goal is to validate the first stage of our News project: building a clean preprocessing pipeline and comparing three embedding strategies—CBOW, Skip-gram, and BERT—for representing news articles.”
+
+Project Framing:
+“Our downstream vision is to enable intelligent news retrieval and clustering. The embedding quality we establish now impacts future tasks like topic grouping or recommendation.”
+
+Dataset Choice:
+“We sampled a small subset of an open News corpus (CC-News style / similar structure) to keep experiments lightweight. It contains article bodies and metadata like title and publish date. For this validation we focus on text content only.”
+
+Why Not Use Full Dataset Now?
+“To prioritize iteration speed in class constraints—training Word2Vec on a massive corpus would be slow; we first validate methodology on a slice.”
+
+Transition Line to Speaker 2:
+“Now that you know what we’re working with, Speaker 2 will walk through the preprocessing pipeline and the quality checks we ran.”
+
+--------------------------------------------------------------------------
+SPEAKER 2 SCRIPT – PREPROCESSING PIPELINE & STATS
+--------------------------------------------------------------------------
+Focus Statement:
+“Our aim was to make text consistent, informative, and model-ready while avoiding over-normalization that would hurt semantics.”
+
+Pipeline Steps (show ordered list in notebook):
+1. Raw loading: inspect first few rows/articles.
+2. Cleaning: removed URLs, social media handles, excess whitespace.
+3. Optional lowercasing: kept original casing for BERT fairness; used lemmatized lower tokens for Word2Vec.
+4. Tokenization & linguistic annotations with spaCy (lemmas, POS, NER for inspection).
+5. Stopword & punctuation filtering for Word2Vec training corpus to reduce noise.
+6. Lemmatization: consolidates inflected forms—improves word frequency signal for static embeddings.
+7. Sentence segmentation: created sentence-level lists for Word2Vec training (improves context windows).
+8. Statistics: document count, average tokens per document, min/max length.
+9. Vocabulary size & top 20 lemmas (to verify no catastrophic filtering).
+
+Example Stats (replace with actual notebook outputs if different):
+- Documents processed: N_docs
+- Average tokens per raw doc: ~X
+- Post-clean average lemma tokens: ~Y
+- Distinct lemmas: V_lemmas
+
+Justification:
+“We balanced cleaning with preserving semantics: we did NOT aggressively strip numbers or named entities because they carry topical signal for news clustering.”
+
+Transition to Speaker 3:
+“With a clean, quantified corpus ready, we can now see how we turned it into numerical vectors. Speaker 3 will explain the embedding models.”
+
+--------------------------------------------------------------------------
+SPEAKER 3 SCRIPT – EMBEDDING MODELS (CBOW, SKIP-GRAM, BERT)
+--------------------------------------------------------------------------
+Opening:
+“We compared two classical distributional models—CBOW and Skip-gram—against a modern contextual model, BERT.”
+
+Conceptual Explanations:
+- CBOW: Predicts a target word from its surrounding context window. Fast, smooths over noisy contexts, good baseline.
+- Skip-gram: Predicts surrounding context words from a center word. Slower but often better for rare words because each word is used as center multiple times.
+- Both produce static embeddings: one vector per word regardless of context.
+- BERT: Transformer-based, bidirectional self-attention; token representations depend on the full sentence; handles polysemy and subword decomposition to avoid OOV.
+
+Our Configurations:
+- Word2Vec params: vector_size=200, window=5, min_count=3, epochs=5 (chosen as a trade-off between expressiveness and runtime on limited data).
+- CBOW uses sg=0; Skip-gram uses sg=1 with identical other hyperparameters for fair comparison.
+- BERT model: bert-base-uncased; we extracted two document embeddings: (1) mean pooling across token embeddings, (2) CLS token vector.
+
+Document Embedding Strategies:
+- Word2Vec: mean of all in-vocabulary word vectors (then L2 normalization).
+- BERT mean: average of final-layer token embeddings (excluding padding).
+- BERT CLS: single special token meant to summarize sequence (can be noisy without fine-tuning, so we compare both).
+
+Why Compare Both BERT Poolings?
+“To highlight stability: mean pooling often gives smoother semantic signals; CLS is conventional but can vary for unseen domains.”
+
+Transition:
+“Now let’s see how these representations differ empirically. Speaker 4 will show similarity results, visual patterns, and efficiency metrics.”
+
+--------------------------------------------------------------------------
+SPEAKER 4 SCRIPT – RESULTS (SIMILARITY, VISUALIZATION, BENCHMARKS)
+--------------------------------------------------------------------------
+Similarity Analysis:
+“We computed cosine similarity among document vectors and inspected nearest neighbors for selected seed articles. Word2Vec variants tended to cluster articles sharing exact keywords. BERT surfaced semantically related pieces even with fewer exact word overlaps.”
+
+Visualization:
+“Using PCA we observed variance concentration—first components capturing broad topic axes. t-SNE emphasized local neighborhoods: BERT embeddings produced tighter topical micro-clusters, while Word2Vec clusters were sometimes noisier due to limited training data.”
+
+Benchmarks (illustrative placeholders—replace with real numbers):
+- Training time (Word2Vec CBOW): T1 s
+- Training time (Word2Vec Skip-gram): T2 s (slightly slower)
+- BERT inference (20 docs): TBERT s (no training cost, but higher per-inference cost)
+- Embedding dimensionality: Word2Vec=200 vs BERT=768
+- OOV rate: Word2Vec ~OOV_W2V; BERT ~0 (uses subword tokens)
+
+Interpretation:
+“Skip-gram performed marginally better for rare terms but its advantage is limited by small corpus size. BERT’s richer dimensional space captures topical nuance at higher computational cost.”
+
+Transition:
+“To wrap up, Speaker 5 will synthesize the trade-offs, note limitations, and outline next steps.”
+
+--------------------------------------------------------------------------
+SPEAKER 5 SCRIPT – COMPARISON, LIMITATIONS, NEXT STEPS
+--------------------------------------------------------------------------
+Comparison Summary:
+“Static models: lightweight, controllable, fast to retrain on domain-specific updates. BERT: zero OOV via subwords, contextual disambiguation, stronger semantic grouping.”
+
+Limitations:
+1. Small sample size → under-trained Word2Vec vectors.
+2. No downstream extrinsic evaluation (e.g., classification) yet.
+3. Simple mean pooling; no weighting like TF-IDF or SIF.
+4. No domain adaptation/fine-tuning for BERT.
+5. Runtime tests on a constrained environment only (CPU).
+
+Next Steps:
+1. Scale corpus and retrain Word2Vec; measure stability of neighborhoods.
+2. Add a supervised or clustering evaluation metric (purity, silhouette, topic coherence).
+3. Try sentence-transformers (e.g., all-MiniLM) for efficient contextual embeddings.
+4. Experiment with SIF-weighted pooling for static embeddings.
+5. Integrate embeddings into a retrieval or RAG prototype.
+
+Closing Line:
+“In summary, we established a reproducible preprocessing pipeline and an initial embedding comparison. We’re now positioned to evaluate these representations on real downstream tasks.”
+
+Q&A Kickoff:
+“We’re happy to take questions—technical, methodological, or about future directions.”
+
+--------------------------------------------------------------------------
+POTENTIAL TEACHER QUESTIONS & MODEL ANSWERS
+--------------------------------------------------------------------------
+SECTION A: DATASET & PREPROCESSING
+1. Q: Why did you choose this dataset slice? 
+   A: It balances representativeness with fast iteration; we needed rapid feedback loops in class. Larger scale will follow once pipeline is locked in.
+2. Q: How large is the processed corpus (docs, tokens)? 
+   A: Provide actual numbers from notebook stats cell.
+3. Q: What cleaning steps did you omit intentionally? 
+   A: Aggressive lowercasing of proper nouns, number stripping—kept them because they carry topical specificity.
+4. Q: Why lemmatize instead of stemming? 
+   A: Lemmatization preserves morphological correctness and aligns with pretrained vocab better than crude stemming.
+5. Q: How do you handle multilingual or non-English content? 
+   A: Current slice assumed primarily English; detection/segmentation is a future enhancement.
+6. Q: How reproducible is preprocessing? 
+   A: Deterministic steps plus fixed random seeds for model training; can be rerun top-to-bottom.
+7. Q: Any data leakage risks? 
+   A: Not at this stage—no supervised labels yet; we’re only unsupervised embedding training.
+8. Q: How did you validate that cleaning didn’t over-strip data? 
+   A: Manual inspection of samples and frequency distribution of top lemmas to ensure domain-specific terms remained.
+9. Q: Did you address duplicate articles? 
+   A: Dedup not central in this subset; for larger ingestion pipeline we’ll integrate hashing/content similarity (already prototyped separately in project codebase).
+10. Q: Did you consider stopword retention for contextual models? 
+    A: Yes; for BERT we feed original text because attention can still exploit function words; only static model corpus was filtered.
+
+SECTION B: WORD2VEC CONFIGURATION
+11. Q: Why vector size 200? 
+    A: Empirically a sweet spot: lower dims underfit semantics; higher dims risk noise and slower training given small corpus.
+12. Q: Why window=5? 
+    A: Standard local context capturing topical + syntactic cues; larger windows can blur specific relations in small corpora.
+13. Q: Why min_count=3? 
+    A: Filters extremely rare tokens that would create unreliable vectors and slow training.
+14. Q: Epochs=5—enough? 
+    A: For a small dataset additional epochs gave diminishing returns while increasing risk of overfitting noise (validated via stability of nearest neighbors across epoch tests).
+15. Q: Differences observed CBOW vs Skip-gram? 
+    A: Skip-gram slightly better at rare terms; CBOW faster. On tiny corpus gap is modest.
+16. Q: How did you ensure fair comparison? 
+    A: Identical hyperparameters except sg flag; same preprocessed corpus and random seed.
+
+SECTION C: BERT & CONTEXTUAL EMBEDDINGS
+17. Q: Why bert-base-uncased? 
+    A: Widely used baseline; good balance between capacity and resource cost; consistent with academic benchmarks.
+18. Q: Why not a distilled model? 
+    A: First validation prioritized canonical baseline; distilled or sentence-transformers are part of next efficiency iteration.
+19. Q: Why mean pooling vs CLS? 
+    A: CLS can be unstable without fine-tuning; mean pooling often yields more robust general-purpose sentence/document embeddings.
+20. Q: Did you fine-tune BERT? 
+    A: No—no labeled downstream objective yet; we used it as a frozen feature extractor.
+21. Q: Tokenization differences impact? 
+    A: Subword tokenization eliminates OOV—rare or compound words still decomposed ensuring coverage, unlike static vocab constraints.
+22. Q: Could you use attention-weighted pooling? 
+    A: Yes; would require additional modeling or use of sentence-transformer architectures—planned future enhancement.
+
+SECTION D: EVALUATION & ANALYSIS
+23. Q: How did you evaluate embedding quality? 
+    A: Qualitative nearest neighbors, clustering geometry (PCA/t-SNE), OOV rate, and basic runtime metrics. Future: extrinsic tasks.
+24. Q: Any quantitative metric now? 
+    A: Not yet—lack of ground truth labels; next phase includes topic classification/clustering metrics.
+25. Q: How trustworthy is t-SNE? 
+    A: It’s stochastic and emphasizes local structure; we treat it as exploratory, not definitive—used with PCA context.
+26. Q: Why normalize Word2Vec document vectors? 
+    A: L2 normalization removes length bias and makes cosine similarity comparable across documents of different lengths.
+27. Q: How did you compute document vectors for BERT? 
+    A: Extract final hidden states; either average token embeddings (excluding padding) or take CLS token; both 768-dim.
+28. Q: Did dimensionality difference bias similarity? 
+    A: Cosine similarity is scale invariant; however higher dimension can encode richer relations—interpretation done qualitatively.
+29. Q: Any sign of overfitting in Word2Vec? 
+    A: Hard to define without downstream task; we monitored stabilization of nearest neighbors and diminishing changes after epochs.
+30. Q: Did you compare memory footprints? 
+    A: Yes; Word2Vec model size roughly proportional to vocab * dim * 4 bytes; BERT weights much larger but reused (no training here).
+
+SECTION E: LIMITATIONS & FUTURE WORK
+31. Q: Biggest current bottleneck? 
+    A: Limited corpus size for robust static embeddings; need larger data to realize Skip-gram advantages.
+32. Q: How to scale? 
+    A: Stream ingestion, incremental training or re-training on larger batch, GPU acceleration for contextual inference.
+33. Q: Plan for evaluation? 
+    A: Introduce a labeled topic/category task or cluster coherence metrics (UMAP+HDBSCAN + coherence scores).
+34. Q: Risk of domain drift? 
+    A: News changes rapidly; periodic retraining or continual learning needed for static embeddings; contextual models remain more resilient.
+35. Q: How will you integrate into an application? 
+    A: Use embeddings for semantic search: index vectors in FAISS; serve retrieval + summarization/RAG with downstream LLM or QA module.
+36. Q: Security/ethical considerations? 
+    A: Potential bias in news sources—future plan includes source diversity tracking and bias auditing.
+
+SECTION F: ADVANCED / STRETCH QUESTIONS
+37. Q: Could subword segmentation hurt interpretability? 
+    A: Slightly; tokens may fragment rare words, but semantic continuity preserved via contextual attention.
+38. Q: Alternative static baselines? 
+    A: FastText (adds subword info) or GloVe (global co-occurrence) could be added for broader comparison.
+39. Q: Why not dimensionality reduction before similarity? 
+    A: We evaluated in original vector space; reduction may distort distances—used only for visualization.
+40. Q: How to weight words in mean pooling? 
+    A: TF-IDF or SIF (Smooth Inverse Frequency) reduces high-frequency neutral word impact.
+41. Q: Handling long documents exceeding BERT max length? 
+    A: Current sample within limit; scalable approach: chunking + pooling (e.g., mean of chunk embeddings).
+42. Q: Measuring semantic drift over time? 
+    A: Track vector shifts for anchor terms across retraining snapshots; use alignment methods (Orthogonal Procrustes).
+43. Q: Any concern about t-SNE perplexity choice? 
+    A: We tested a reasonable range; final plot chosen for cluster legibility—parameter selection documented in code (if added).
+44. Q: Why not use classification to compare embeddings now? 
+    A: We lack labeled targets; premature evaluation could bias model selection before pipeline maturity.
+45. Q: How would you compress BERT embeddings for production? 
+    A: Use dimensionality reduction (PCA) to ~256 dims or switch to distilled sentence-transformers.
+
+SECTION G: RAPID ANSWER CHEAT SHEET (1-Liners)
+- CBOW vs Skip-gram: Speed vs rare-word sensitivity.
+- Lemmatization purpose: Normalize inflections, reduce sparsity.
+- BERT advantage: Contextual, no OOV via subwords.
+- OOV cause in Word2Vec: min_count filtering + closed vocab.
+- Mean pooling rationale: Stable, simple baseline.
+- Next immediate step: Add downstream evaluation task.
+- Why small corpus now: Fast iteration, methodology validation first.
+- Visualization caveat: t-SNE exploratory only.
+
+--------------------------------------------------------------------------
+FINAL PRESENTER CHECKLIST
+--------------------------------------------------------------------------
+[ ] Replace placeholder numbers (N_docs, X, Y, V_lemmas, OOV_W2V, T1, T2, TBERT) with actual notebook outputs.
+[ ] Ensure notebook runs top-to-bottom without manual intervention.
+[ ] Clear any unused imports/warnings to reduce noise.
+[ ] Keep a backup export (HTML or PDF) in case of runtime issues.
+[ ] Time a rehearsal—target 13:30–14:00 live to allow Q&A.
+[ ] Print or share this explication.txt to all members.
+[ ] Decide on who handles unexpected advanced questions (assign a “floater”).
+
+End of File.
