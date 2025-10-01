@@ -72,20 +72,44 @@ async def process_message(loop, msg, producer, storage, semaphore):  # type: ign
                 'content': payload.get('summary', ''),
             }
             enriched = await _enrich_one(loop, base_article)
-            if not enriched:
-                raise RuntimeError('Full content fetch failed')
 
-            storage.save_article({
-                'title': enriched['title'],
-                'link': enriched['link'],
-                'publish_date': enriched.get('publish_date', ''),
-                'source': enriched.get('source', 'Unknown'),
-                'category': enriched.get('category', 'uncategorized'),
-                'content': enriched.get('content', ''),
-                'full_content': enriched.get('full_content'),
-            })
+            stored_full_content = None
+            if enriched:
+                stored_content = enriched.get('content', base_article['content'])
+                storage.save_article({
+                    'title': enriched['title'],
+                    'link': enriched['link'],
+                    'publish_date': enriched.get('publish_date', ''),
+                    'source': enriched.get('source', 'Unknown'),
+                    'category': enriched.get('category', 'uncategorized'),
+                    'content': stored_content,
+                    'full_content': enriched.get('full_content'),
+                })
+                enrichment_status = 'full'
+                stored_full_content = enriched.get('full_content')
+            else:
+                logger.warning(f"Full content fetch failed for link={link}; storing summary only")
+                saved = storage.save_article({
+                    'title': base_article['title'],
+                    'link': base_article['link'],
+                    'publish_date': base_article.get('publish_date', ''),
+                    'source': base_article.get('source', 'Unknown'),
+                    'category': base_article.get('category', 'uncategorized'),
+                    'content': base_article.get('content', ''),
+                    'full_content': None,
+                })
+                if not saved:
+                    logger.debug(f"Summary insert skipped (likely duplicate) for link={link}")
+                CONSUMER_METRICS['processing_partial'] += 1
+                enrichment_status = 'summary_only'
+                stored_full_content = None
 
-            enriched_record = {**payload, 'full_content': enriched['full_content'], 'enriched_at': now_iso()}
+            enriched_record = {
+                **payload,
+                'full_content': stored_full_content,
+                'enrichment_status': enrichment_status,
+                'enriched_at': now_iso(),
+            }
             try:
                 await producer.send_and_wait(CLEANED_TOPIC, to_json(enriched_record), key=(link.encode('utf-8') if link else None))
                 PRODUCER_METRICS['messages_produced'] += 1

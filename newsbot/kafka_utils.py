@@ -73,7 +73,7 @@ def install_signal_handlers(flag: ShutdownFlag):
 
 # Lazily import inside builders to avoid forcing deps where unused.
 
-DEFAULT_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+DEFAULT_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:29092")
 
 def _resolve_bootstrap(bootstrap: str) -> str:
     """Return a bootstrap string preferring an already working endpoint.
@@ -197,6 +197,7 @@ CONSUMER_METRICS = {
     "messages_consumed": 0,
     "processing_success": 0,
     "processing_failures": 0,
+    "processing_partial": 0,
 }
 
 # Suggested Prometheus metric names:

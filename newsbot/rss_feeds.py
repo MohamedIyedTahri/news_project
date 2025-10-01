@@ -35,6 +35,20 @@ RSS_FEEDS = {
         "https://www.skynewsarabia.com/web/rss",  # Sky News Arabia
         "https://www.france24.com/ar/rss",  # France24 Arabic
         "https://www.dw.com/line/rss-aleppo"  # DW Arabic (example regional feed)
+    ],
+    # Science & research
+    "science": [
+        "https://www.sciencenews.org/feed",  # Full article; Science News WordPress full text
+        "https://www.space.com/feeds/all",  # Full article; Space.com long-form coverage
+        "https://www.nasa.gov/rss/dyn/breaking_news.rss",  # Summary; NASA press highlights
+        "https://www.newscientist.com/feed/home/",  # Summary; New Scientist teasers
+    ],
+    # Health & medicine
+    "health": [
+        "https://www.medicalnewstoday.com/rss",  # Full article; Medical News Today full text
+        "https://www.statnews.com/feed/",  # Full article; STAT publishes complete stories
+        "https://www.health.harvard.edu/blog/feed",  # Full article; Harvard Health blog posts
+        "https://www.who.int/feeds/entity/mediacentre/news/en/rss.xml",  # Summary; WHO media releases
     ]
 }
 

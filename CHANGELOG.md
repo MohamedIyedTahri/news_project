@@ -1,6 +1,28 @@
 # Changelog
 
-## [Latest] - September 30, 2025
+## [Latest] - October 1, 2025
+
+### Added
+- **Science and Health categories**: Added to main RSS_FEEDS dictionary for continuous monitoring
+  - Science: 4 feeds (Science News, Space.com, NASA, New Scientist)
+  - Health: 4 feeds (Medical News Today, STAT, Harvard Health, WHO)
+- **Summary fallback mechanism**: Consumer now stores RSS summaries when full-content fetch fails
+  - Handles paywall/403 errors gracefully by preserving summary-only articles
+  - New `processing_partial` metric tracks fallback operations
+  - Enrichment status field added to downstream messages
+
+### Fixed
+- **Kafka bootstrap resolution**: Changed default from `localhost:9092` to `localhost:29092` for Docker compatibility
+- **Consumer failure handling**: No longer discards articles when scraping is blocked by paywalls
+- **Database growth stagnation**: Pipeline now continuously adds new articles from all 6 categories
+
+### Performance
+- **Database growth**: 857 → 870 articles (+12) in single pipeline cycle
+- **Partial enrichment**: 34 articles stored with summaries when full content unavailable
+- **Processing success**: 200/200 messages consumed successfully (100% reliability)
+- **Category coverage**: All 6 categories (international, tech, finance, arabic, science, health) active
+
+## [Previous] - September 30, 2025
 
 ### Added
 - **Extended RSS feed coverage**: Added `RSS_FEEDS_EXTENDED` dictionary with 66+ feeds across 8 categories

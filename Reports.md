@@ -469,7 +469,21 @@ python -m newsbot.db_stats --min-coverage 50  # Health checks
 
 ### Current Statistics (October 1, 2025)
 
-#### Production Automation Results
+#### Latest Production Results
+```
+Overall coverage: 622/870 (71.6%) - With summary fallback enabled
+------------------------------------------------------------------------------
+Category          Total    Full    Miss   Cover%  AvgFullLen
+------------------------------------------------------------------------------
+tech                342     281      61    82.2%      9552.1
+international       300     225      75    75.0%      4423.8
+finance             103      50      53    48.5%      6751.7
+arabic              100      42      58    42.0%      1723.3
+science              20      20       0   100.0%      5152.9
+health                5       5       0   100.0%       120.8
+```
+
+#### Previous Production Automation Results
 ```
 Overall coverage: 615/839 (73.3%) - Continuous automation pipeline
 ------------------------------------------------------------------------------
