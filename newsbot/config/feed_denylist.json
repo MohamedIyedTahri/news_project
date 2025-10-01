@@ -1,0 +1,17 @@
+{
+  "global": [
+    "https://www.reuters.com/world/rss",
+    "https://www.reuters.com/finance/markets/rss",
+    "https://www.wsj.com/xml/rss/3_7031.xml",
+    "https://feeds.bloomberg.com/markets/news.rss",
+    "https://www.dw.com/line/rss-aleppo",
+    "https://www.skynewsarabia.com/web/rss",
+    "https://www.alarabiya.net/rss",
+    "https://www.aljazeera.net/aljazeera/rss",
+    "https://www.masrawy.com/rss/rss_topstories.aspx",
+    "https://www.asharq.com/feed",
+    "https://venturebeat.com/feed/",
+    "https://www.digitaltrends.com/news/rss/",
+    "https://www.si.com/.rss/full"
+  ]
+}

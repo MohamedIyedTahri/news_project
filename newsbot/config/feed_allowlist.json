@@ -1,0 +1,29 @@
+{
+  "tech": [
+    "https://feeds.arstechnica.com/arstechnica/technology-lab",
+    "https://www.theverge.com/rss/index.xml",
+    "https://www.wired.com/feed/rss",
+    "https://www.zdnet.com/news/rss.xml",
+    "https://www.engadget.com/rss.xml"
+  ],
+  "science": [
+    "https://www.nasa.gov/rss/dyn/breaking_news.rss",
+    "https://www.sciencenews.org/feed",
+    "https://www.space.com/feeds/all"
+  ],
+  "health": [
+    "https://www.statnews.com/feed/",
+    "https://www.medicalnewstoday.com/rss"
+  ],
+  "international": [
+    "https://www.france24.com/en/rss",
+    "https://www.aljazeera.com/xml/rss/all.xml"
+  ],
+  "arabic": [
+    "https://www.alhurra.com/rss"
+  ],
+  "finance": [
+    "https://www.marketwatch.com/rss/topstories",
+    "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"
+  ]
+}

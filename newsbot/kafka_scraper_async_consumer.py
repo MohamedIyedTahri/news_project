@@ -105,15 +105,26 @@ async def process_message(loop, msg, producer, storage, semaphore):  # type: ign
 
 async def run_async_consumer(max_messages: int | None = None):
     loop = asyncio.get_running_loop()
-    consumer = await build_async_consumer(group_id='scraper-workers-async', topics=[RSS_TOPIC])
-    producer = await build_async_producer()
     storage = NewsStorage()
+    consumer = None
+    producer = None
     semaphore = asyncio.Semaphore(CONCURRENCY)
     flag = ShutdownFlag()
     install_signal_handlers(flag)
-
-    await consumer.start()
-    await producer.start()
+    try:
+        consumer = await build_async_consumer(group_id='scraper-workers-async', topics=[RSS_TOPIC])
+        await consumer.start()
+        producer = await build_async_producer()
+        await producer.start()
+    except Exception as e:
+        logger.error(f"Async consumer bootstrap failure: {e}")
+        if consumer:
+            try:
+                await consumer.stop()
+            except Exception:
+                pass
+        storage.close()
+        return
 
     processed = 0
     last_metrics = 0.0
@@ -144,14 +155,16 @@ async def run_async_consumer(max_messages: int | None = None):
                 break
     finally:
         logger.info("Async consumer shutting down")
-        try:
-            await producer.stop()
-        except Exception:
-            pass
-        try:
-            await consumer.stop()
-        except Exception:
-            pass
+        if producer:
+            try:
+                await producer.stop()
+            except Exception:
+                pass
+        if consumer:
+            try:
+                await consumer.stop()
+            except Exception:
+                pass
         storage.close()
         log_metrics()
         logger.info(f"Async processed messages={processed}")

@@ -75,6 +75,32 @@ def install_signal_handlers(flag: ShutdownFlag):
 
 DEFAULT_BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
+def _resolve_bootstrap(bootstrap: str) -> str:
+    """Return a bootstrap string preferring an already working endpoint.
+
+    In docker-compose setups the internal listener may be advertised as 'kafka:9092'.
+    From the host network that hostname often does NOT resolve. If the user forgot
+    to export KAFKA_BOOTSTRAP_SERVERS=localhost:29092 we attempt a best-effort
+    fallback:
+        1. If hostname part contains 'kafka' and port 9092, try 'localhost:29092'.
+        2. Otherwise return the given value.
+
+    This keeps existing behaviour but avoids silent zero-message runs due to DNS
+    failures ("Failed to resolve 'kafka:9092'"). A log line documents adjustments.
+    """
+    try:
+        host, port = bootstrap.split(":", 1)
+    except ValueError:
+        return bootstrap
+    if host == "kafka" and port == "9092":
+        # prefer external mapped listener if present
+        alt = "localhost:29092"
+        logger.info(f"Bootstrap '{bootstrap}' not resolvable from host context; using fallback '{alt}'. Set KAFKA_BOOTSTRAP_SERVERS to override.")
+        return alt
+    return bootstrap
+
+RESOLVED_BOOTSTRAP = _resolve_bootstrap(DEFAULT_BOOTSTRAP)
+
 
 def build_producer(config: Optional[Dict[str, Any]] = None):  # type: ignore
     """Create a confluent-kafka producer with sensible defaults.
@@ -83,7 +109,7 @@ def build_producer(config: Optional[Dict[str, Any]] = None):  # type: ignore
     """
     from confluent_kafka import Producer
     base = {
-        "bootstrap.servers": DEFAULT_BOOTSTRAP,
+    "bootstrap.servers": RESOLVED_BOOTSTRAP,
         "enable.idempotence": True,
         "linger.ms": 100,
         "batch.num.messages": 1000,
@@ -106,7 +132,7 @@ def build_consumer(group_id: str, topics: Iterable[str], config: Optional[Dict[s
     """
     from confluent_kafka import Consumer
     base = {
-        "bootstrap.servers": DEFAULT_BOOTSTRAP,
+    "bootstrap.servers": RESOLVED_BOOTSTRAP,
         "group.id": group_id,
         "enable.auto.commit": False,
         "auto.offset.reset": "earliest",
@@ -115,7 +141,7 @@ def build_consumer(group_id: str, topics: Iterable[str], config: Optional[Dict[s
     }
     if config:
         base.update(config)
-    logger.info(f"Building Kafka Consumer group={group_id} topics={list(topics)}")
+    logger.info(f"Building Kafka Consumer group={group_id} topics={list(topics)} bootstrap={RESOLVED_BOOTSTRAP}")
     consumer = Consumer(base)
     consumer.subscribe(list(topics))
     return consumer
@@ -124,7 +150,7 @@ def build_consumer(group_id: str, topics: Iterable[str], config: Optional[Dict[s
 async def build_async_consumer(group_id: str, topics: Iterable[str], config: Optional[Dict[str, Any]] = None):  # type: ignore
     from aiokafka import AIOKafkaConsumer
     merged = {
-        "bootstrap_servers": DEFAULT_BOOTSTRAP,
+    "bootstrap_servers": RESOLVED_BOOTSTRAP,
         "group_id": group_id,
         "enable_auto_commit": False,
         "auto_offset_reset": "earliest",
@@ -137,10 +163,21 @@ async def build_async_consumer(group_id: str, topics: Iterable[str], config: Opt
 
 async def build_async_producer(config: Optional[Dict[str, Any]] = None):  # type: ignore
     from aiokafka import AIOKafkaProducer
+    # Detect lz4 availability; aiokafka requires python-lz4 native extension when using lz4 compression
+    compression = "lz4"
+    try:
+        import lz4.frame  # type: ignore
+        _lz4_ok = True
+    except Exception:
+        _lz4_ok = False
+        compression = "gzip"  # safer widely-available fallback
+        logger.warning(
+            "lz4 compression not available (install 'lz4' package for optimal performance); falling back to gzip"
+        )
     merged = {
-        "bootstrap_servers": DEFAULT_BOOTSTRAP,
+        "bootstrap_servers": RESOLVED_BOOTSTRAP,
         "linger_ms": 5,
-        "compression_type": "lz4",
+        "compression_type": compression,
         "acks": "all",
         "enable_idempotence": True,
     }

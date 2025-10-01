@@ -1,6 +1,8 @@
 import feedparser
 import logging
 from datetime import datetime
+from typing import Dict, Iterable, List, Optional
+
 from newsbot.cleaner import clean_html
 from newsbot.storage import NewsStorage
 from newsbot.rss_feeds import RSS_FEEDS
@@ -12,7 +14,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Step 1: Fetch and parse one RSS feed
-def fetch_rss_feed(feed_url, category):
+def fetch_rss_feed(
+    feed_url: str,
+    category: str,
+    *,
+    skip_bozo: bool = False,
+    max_entries: Optional[int] = None,
+):
     """
     Fetch and parse articles from a single RSS feed.
     
@@ -21,8 +29,9 @@ def fetch_rss_feed(feed_url, category):
         category (str): The category of the news (e.g., 'tech', 'international')
     
     Returns:
-        list: List of article dictionaries
+        tuple: (list of article dicts, bool indicating bozo skip)
     """
+    skipped_due_to_bozo = False
     try:
         logger.info(f"Fetching RSS feed: {feed_url}")
         feed = feedparser.parse(feed_url)
@@ -30,9 +39,16 @@ def fetch_rss_feed(feed_url, category):
         # Check if feed was parsed successfully
         if feed.bozo:
             logger.warning(f"Feed parsing warning for {feed_url}: {feed.bozo_exception}")
+            if skip_bozo:
+                # skip processing this feed entirely when --skip-bozo is active
+                logger.info(f"Skipping feed due to bozo flag: {feed_url}")
+                skipped_due_to_bozo = True
+                return [], skipped_due_to_bozo
         
         articles = []
-        for entry in feed.entries:
+        # limit entries during controlled runs to avoid huge batches
+        entries = feed.entries[:max_entries] if max_entries else feed.entries
+        for entry in entries:
             try:
                 # Extract and clean article data
                 article = {
@@ -55,44 +71,67 @@ def fetch_rss_feed(feed_url, category):
                 continue
         
         logger.info(f"Successfully parsed {len(articles)} articles from {feed_url}")
-        return articles
+        return articles, skipped_due_to_bozo
         
     except Exception as e:
         logger.error(f"Error fetching RSS feed {feed_url}: {e}")
-        return []
+        return [], skipped_due_to_bozo
 
 # Step 2: Fetch and parse multiple RSS feeds with deduplication
-def fetch_multiple_feeds(feed_categories=None, use_deduplication=True):
+def fetch_multiple_feeds(
+    feed_categories: Optional[Iterable[str]] = None,
+    use_deduplication: bool = True,
+    feed_registry: Optional[Dict[str, List[str]]] = None,
+    skip_bozo: bool = False,
+    max_entries_per_feed: Optional[int] = None,
+    return_stats: bool = False,
+):
     """
     Fetch and parse articles from multiple RSS feeds across different categories.
     
     Args:
         feed_categories (list): List of category names to fetch. If None, fetches all categories.
         use_deduplication (bool): Whether to apply deduplication logic
-    
+        feed_registry: Optional custom registry of feeds by category.
+        skip_bozo: When True, skip feeds that fail parsing (feed.bozo set).
+        max_entries_per_feed: Limit the number of entries pulled from each feed.
+        return_stats: When True, also return a stats dictionary for monitoring.
+
     Returns:
-        dict: Dictionary with category names as keys and list of articles as values
+        dict: Dictionary with category names as keys and list of articles as values.
+        tuple: If return_stats is True, returns (articles_by_category, stats_dict).
     """
+    registry = feed_registry or RSS_FEEDS
+
     if feed_categories is None:
-        feed_categories = RSS_FEEDS.keys()
+        feed_categories = registry.keys()
     
     all_articles = {}
+    category_post_counts: Dict[str, int] = {}
     total_articles = 0
     total_duplicates = 0
+    bozo_skipped = 0
     
     # Initialize deduplicator if requested
     deduplicator = ArticleDeduplicator() if use_deduplication else None
     
     for category in feed_categories:
-        if category not in RSS_FEEDS:
+        if category not in registry:
             logger.warning(f"Category '{category}' not found in RSS_FEEDS")
             continue
         
         category_articles = []
         logger.info(f"Processing category: {category}")
         
-        for feed_url in RSS_FEEDS[category]:
-            articles = fetch_rss_feed(feed_url, category)
+        for feed_url in registry.get(category, []):
+            articles, was_bozo_skip = fetch_rss_feed(
+                feed_url,
+                category,
+                skip_bozo=skip_bozo,
+                max_entries=max_entries_per_feed,
+            )
+            if was_bozo_skip:
+                bozo_skipped += 1
             category_articles.extend(articles)
             total_articles += len(articles)
         
@@ -106,11 +145,23 @@ def fetch_multiple_feeds(feed_categories=None, use_deduplication=True):
             logger.info(f"Category '{category}': {len(category_articles)} articles")
         
         all_articles[category] = category_articles
+        category_post_counts[category] = len(category_articles)
     
     logger.info(f"Total articles fetched: {total_articles}")
     if use_deduplication:
         logger.info(f"Total duplicates removed: {total_duplicates}")
+    if skip_bozo:
+        logger.info(f"Feeds skipped due to bozo flag: {bozo_skipped}")
     
+    if return_stats:
+        stats = {
+            "total_articles": total_articles,
+            "duplicates_removed": total_duplicates if use_deduplication else 0,
+            "bozo_skipped": bozo_skipped,
+            "category_totals": category_post_counts,
+        }
+        return all_articles, stats
+
     return all_articles
 
 # Step 3: Save multiple articles with progress tracking
@@ -205,25 +256,56 @@ def enrich_database_with_full_articles(storage: NewsStorage, limit: int = 20, mi
         return {"requested": 0, "updated": 0, "error": str(e)}
 
 
-def collect_and_store_articles(categories=None, enrich_full: bool = True, batch_enrich_limit: int = 30):
+def collect_and_store_articles(
+    categories: Optional[Iterable[str]] = None,
+    enrich_full: bool = True,
+    batch_enrich_limit: int = 30,
+    feed_registry: Optional[Dict[str, List[str]]] = None,
+    skip_bozo: bool = False,
+    max_entries_per_feed: Optional[int] = None,
+    return_stats: bool = False,
+):
     """High-level pipeline: fetch RSS summaries, optionally fetch full content, store both.
 
     If enrich_full is True, attempts to fetch full content immediately for new articles
     before insertion (best-effort). Full content is saved in 'full_content' column while
     RSS summary remains in 'content'.
+
+    Args:
+        categories: Iterable of category names to process; defaults to all categories.
+        enrich_full: Whether to fetch full article content during ingestion.
+        batch_enrich_limit: Max number of backlog articles to enrich after ingest.
+    feed_registry: Optional mapping of categories to feed URLs overriding defaults.
+    skip_bozo: If True, feeds marked bozo by feedparser are skipped.
+    max_entries_per_feed: Limit number of entries retrieved from each feed.
+    return_stats: When True, return pipeline statistics for reporting.
     """
     storage = NewsStorage()
     try:
-        articles_by_cat = fetch_multiple_feeds(categories, use_deduplication=True)
+        fetch_result = fetch_multiple_feeds(
+            feed_categories=categories,
+            use_deduplication=True,
+            feed_registry=feed_registry,
+            skip_bozo=skip_bozo,
+            max_entries_per_feed=max_entries_per_feed,
+            return_stats=return_stats,
+        )
+        if return_stats:
+            articles_by_cat, feed_stats = fetch_result
+        else:
+            articles_by_cat = fetch_result
+            feed_stats = None
+        enrich_stats = None
         # Flatten new articles for optional full fetch
         if enrich_full:
             flat = []
             for cat_list in articles_by_cat.values():
                 flat.extend(cat_list)
-            full_ok, _ = fetch_full_articles(flat)
+            full_ok, full_fail = fetch_full_articles(flat)
             full_map = {fa.link: fa for fa in full_ok}
         else:
             full_map = {}
+            full_ok, full_fail = [], []
 
         total_saved = 0
         for category, articles in articles_by_cat.items():
@@ -240,6 +322,15 @@ def collect_and_store_articles(categories=None, enrich_full: bool = True, batch_
         if enrich_full:
             enrich_stats = enrich_database_with_full_articles(storage, limit=batch_enrich_limit)
             logger.info(f"Post-ingest backfill completed: {enrich_stats}")
+        if return_stats:
+            pipeline_stats = {
+                "stored_articles": total_saved,
+                "full_fetch_success": len(full_ok),
+                "full_fetch_failed": len(full_fail),
+                "feed_stats": feed_stats,
+                "backfill": enrich_stats if enrich_full else None,
+            }
+            return pipeline_stats
         return True
     finally:
         storage.close()
@@ -252,7 +343,7 @@ if __name__ == "__main__":
         print("\n=== Testing Single RSS Feed ===")
         feed_url = RSS_FEEDS["international"][0]
         logger.info(f"Starting to fetch articles from: {feed_url}")
-        articles = fetch_rss_feed(feed_url, "international")
+        articles, _ = fetch_rss_feed(feed_url, "international")
         
         # Save articles to database
         saved_count = 0
@@ -305,7 +396,6 @@ if __name__ == "__main__":
         else:
             print("No tech articles available for enrichment test.")
 
-        storage.close()
     except Exception as e:
         logger.error(f"Fatal error in main execution: {e}")
         print(f"✗ Error: {e}")

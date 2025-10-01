@@ -8,3 +8,4 @@ httpx>=0.27,<0.28
 feedparser
 beautifulsoup4
 requests
+lz4  # optional: enables lz4 compression in async producer (falls back to gzip if missing)

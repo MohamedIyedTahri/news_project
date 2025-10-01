@@ -103,7 +103,6 @@ RSS_FEEDS_EXTENDED = {
         "https://www.sciencenews.org/feed",  # Full article; Science News WordPress full text
         "https://www.space.com/feeds/all",  # Full article; Space.com long-form coverage
         "https://www.nasa.gov/rss/dyn/breaking_news.rss",  # Summary; NASA press highlights
-        "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml",  # Summary; NYT science section
         "https://www.newscientist.com/feed/home/",  # Summary; New Scientist teasers
     ],
     # Health & medicine
@@ -111,7 +110,6 @@ RSS_FEEDS_EXTENDED = {
         "https://www.medicalnewstoday.com/rss",  # Full article; Medical News Today full text
         "https://www.statnews.com/feed/",  # Full article; STAT publishes complete stories
         "https://www.health.harvard.edu/blog/feed",  # Full article; Harvard Health blog posts
-        "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml",  # Summary; NYT health briefs
         "https://www.who.int/feeds/entity/mediacentre/news/en/rss.xml",  # Summary; WHO media releases
     ],
     # Sports & athletics
@@ -127,7 +125,7 @@ RSS_FEEDS_EXTENDED = {
         "https://www.hollywoodreporter.com/feed/",  # Full article; Hollywood Reporter complete content
         "https://variety.com/feed/",  # Full article; Variety publishes full stories
         "https://www.rollingstone.com/music/music-news/feed/",  # Full article; Rolling Stone music news
-        "https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml",  # Summary; NYT arts section previews
+        #"https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml",  # Summary; NYT arts section previews
         "https://www.eonline.com/syndication/rss/topstories.xml",  # Summary; E! News entertainment briefs
     ],
 }
