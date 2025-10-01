@@ -144,8 +144,12 @@ class PipelineManager:
                 
             logger.info(f"Starting producer batch: {' '.join(cmd)}")
             
+            # Ensure proper environment for subprocess
+            env = os.environ.copy()
+            env['KAFKA_BOOTSTRAP_SERVERS'] = self.config.kafka_bootstrap
+            
             result = subprocess.run(
-                cmd, timeout=120, capture_output=True, text=True
+                cmd, timeout=120, capture_output=True, text=True, env=env
             )
             
             if result.returncode == 0:
@@ -178,9 +182,13 @@ class PipelineManager:
             
             logger.info(f"Starting consumer batch: {' '.join(cmd)}")
             
+            # Ensure proper environment for subprocess
+            env = os.environ.copy()
+            env['KAFKA_BOOTSTRAP_SERVERS'] = self.config.kafka_bootstrap
+            
             result = subprocess.run(
                 cmd, timeout=self.config.consumer_timeout, 
-                capture_output=True, text=True
+                capture_output=True, text=True, env=env
             )
             
             if result.returncode == 0:
