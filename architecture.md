@@ -7,15 +7,15 @@ The News Chatbot Project implements a modern, scalable architecture for real-tim
 ## Architecture Diagram
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   RSS Sources   │    │   Apache Kafka   │    │   Storage &     │
-│                 │    │                  │    │   Analytics     │
-│ • BBC News      │    │ ┌──────────────┐ │    │                 │
-│ • Tech RSS      │────▶│ │ rss.items    │ │────▶│ • SQLite WAL    │
-│ • Finance       │    │ │   Topic      │ │    │ • Embeddings    │
-│ • Arabic News   │    │ └──────────────┘ │    │ • Vector DB     │
-│ • Custom Feeds  │    │                  │    │   (Future)      │
-└─────────────────┘    │ ┌──────────────┐ │    └─────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌────────────────────┐
+│   RSS Sources   │    │   Apache Kafka   │    │    Storage &        │
+│                 │    │                  │    │  Feature Extraction │
+│ • BBC News      │    │ ┌──────────────┐ │    │                    │
+│ • Tech RSS      │────▶│ │ rss.items    │ │────▶│ • SQLite WAL       │
+│ • Finance       │    │ │   Topic      │ │    │ • Processed vectors │
+│ • Arabic News   │    │ └──────────────┘ │    │ • Vector DB (Future)│
+│ • Custom Feeds  │    │                  │    │                    │
+└─────────────────┘    │ ┌──────────────┐ │    └────────────────────┘
                        │ │articles.     │ │
 ┌─────────────────┐    │ │cleaned Topic │ │    ┌─────────────────┐
 │  Kafka Producer │────▶│ └──────────────┘ │────▶│   NLP Pipeline  │
@@ -33,6 +33,13 @@ The News Chatbot Project implements a modern, scalable architecture for real-tim
                        │ • Async Consumer  │
                        │ • Enrichment      │
                        │ • Error Handling  │
+                       └─────────┬─────────┘
+                                 │
+                       ┌─────────▼─────────┐
+                       │  Spark Processor  │
+                       │ (Batch & Stream)  │
+                       │ • TF-IDF features │
+                       │ • Incremental id  │
                        └───────────────────┘
 ```
 
@@ -127,6 +134,14 @@ CREATE TABLE articles (
 - **Upsert Operations**: Conflict resolution for duplicate handling
 - **Performance**: 1000+ inserts/second with proper indexing
 - **Backup Support**: Integrated backup and restore functionality
+
+### 5. Feature Extraction (`newsbot/spark_processor.py`)
+
+- **Purpose**: Convert curated article text into token and TF-IDF vectors for NLP workloads.
+- **Execution Modes**: Ad-hoc batch runs and Structured Streaming micro-batches driven by a synthetic rate source.
+- **Storage Target**: Persists feature payloads to the `processed_articles` table (upsert semantics keyed by `article_id`).
+- **Pipeline**: RegexTokenizer → StopWordsRemover → HashingTF → IDF, configured with 4,096 features by default.
+- **Operational Guide**: See [`processing.md`](processing.md) for container commands, dependency setup, and troubleshooting tips.
 
 ### 6. RSS Feed Management and Validation
 

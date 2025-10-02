@@ -1,6 +1,9 @@
 import sqlite3
 import os
 import logging
+import json
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 DB_PATH = "news_articles.db"
 
@@ -14,6 +17,7 @@ class NewsStorage:
         self.conn.execute("PRAGMA journal_mode=WAL;")  # better concurrent reads
         self.create_table()
         self._migrate_add_full_content()
+        self._ensure_processed_articles_table()
 
     def create_table(self):
         """Create base table if it does not exist (initial schema)."""
@@ -54,6 +58,34 @@ class NewsStorage:
                 logger.debug("Migration skip: 'full_content' column already present")
         except Exception as e:
             logger.error(f"Migration error (add full_content): {e}")
+
+    def _ensure_processed_articles_table(self):
+        """Create processed_articles table for Spark features if missing."""
+        try:
+            self.conn.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS processed_articles (
+                    article_id INTEGER PRIMARY KEY,
+                    token_count INTEGER,
+                    tokens TEXT,
+                    feature_vector TEXT,
+                    pipeline_version TEXT,
+                    processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(article_id) REFERENCES articles(id)
+                )
+                '''
+            )
+            self.conn.commit()
+            # Lightweight index for faster lookups by processed timestamp
+            self.conn.execute(
+                '''
+                CREATE INDEX IF NOT EXISTS idx_processed_articles_processed_at
+                ON processed_articles (processed_at)
+                '''
+            )
+            self.conn.commit()
+        except Exception as exc:
+            logger.error(f"Failed to ensure processed_articles table: {exc}")
 
     def save_article(self, article):
         """Insert or update an article.
@@ -103,6 +135,98 @@ class NewsStorage:
         except Exception as e:
             logger.error(f"Error saving article link={article.get('link')}: {e}")
             return False
+
+    # ------------------------ Processed Article Helpers ------------------------
+    def save_processed_article(
+        self,
+        *,
+        article_id: int,
+        tokens: List[str],
+        feature_vector: List[float],
+        token_count: int,
+        pipeline_version: str,
+        processed_at: Optional[str] = None,
+    ) -> bool:
+        """Upsert processed NLP features for a given article."""
+        processed_at = processed_at or datetime.utcnow().isoformat(timespec="seconds")
+        try:
+            self.conn.execute(
+                '''
+                INSERT INTO processed_articles (article_id, token_count, tokens, feature_vector, pipeline_version, processed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(article_id) DO UPDATE SET
+                    token_count = excluded.token_count,
+                    tokens = excluded.tokens,
+                    feature_vector = excluded.feature_vector,
+                    pipeline_version = excluded.pipeline_version,
+                    processed_at = excluded.processed_at
+                ''',
+                (
+                    article_id,
+                    token_count,
+                    json.dumps(tokens),
+                    json.dumps(feature_vector),
+                    pipeline_version,
+                    processed_at,
+                ),
+            )
+            self.conn.commit()
+            return True
+        except Exception as exc:
+            logger.error(f"Error saving processed article id={article_id}: {exc}")
+            return False
+
+    def fetch_articles_for_processing(
+        self,
+        *,
+        since_id: Optional[int] = None,
+        limit: Optional[int] = None,
+        min_length: int = 50,
+        prefer_full_content: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Return articles prepared for downstream Spark processing."""
+        content_expr = (
+            "COALESCE(NULLIF(full_content, ''), NULLIF(content, ''))"
+            if prefer_full_content
+            else "COALESCE(NULLIF(content, ''), NULLIF(full_content, ''))"
+        )
+
+        query = [
+            "SELECT id, {expr} AS clean_text FROM articles WHERE {expr} IS NOT NULL".format(expr=content_expr)
+        ]
+        params: List[Any] = []
+
+        # Apply minimum content length filter
+        query.append(f"AND length(trim({content_expr})) >= ?")
+        params.append(min_length)
+
+        if since_id is not None:
+            query.append("AND id > ?")
+            params.append(since_id)
+
+        query.append("ORDER BY id ASC")
+        if limit is not None:
+            query.append("LIMIT ?")
+            params.append(limit)
+
+        final_query = "\n".join(query)
+        try:
+            cursor = self.conn.execute(final_query, tuple(params))
+            rows = cursor.fetchall()
+            return [{"article_id": row[0], "clean_text": row[1]} for row in rows if row[1]]
+        except Exception as exc:
+            logger.error(f"Error fetching articles for processing: {exc}")
+            return []
+
+    def get_latest_processed_article_id(self) -> int:
+        """Return the highest article id already processed by Spark."""
+        try:
+            cursor = self.conn.execute("SELECT COALESCE(MAX(article_id), 0) FROM processed_articles")
+            value = cursor.fetchone()[0]
+            return int(value or 0)
+        except Exception as exc:
+            logger.error(f"Error retrieving latest processed article id: {exc}")
+            return 0
 
     def get_statistics(self):
         """

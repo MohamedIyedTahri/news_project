@@ -45,8 +45,8 @@ class PipelineConfig:
     """Configuration for automated pipeline."""
     interval_seconds: int = 600  # 10 minutes default
     categories: Optional[List[str]] = None
-    max_articles_per_batch: int = 50
-    consumer_timeout: int = 300  # 5 minutes
+    max_articles_per_batch: int = 1000
+    consumer_timeout: int = 900  # 15 minutes
     health_check_interval: int = 60  # 1 minute
     restart_on_failure: bool = True
     kafka_bootstrap: str = "localhost:29092"
@@ -135,7 +135,7 @@ class PipelineManager:
             return {}
             
     def run_producer_batch(self) -> bool:
-        """Run producer to fetch new RSS articles."""
+        """Run producer to fetch new RSS articles with verbose per-category logging."""
         try:
             cmd = [sys.executable, '-m', 'newsbot.kafka_producer', '--once']
             
@@ -154,12 +154,28 @@ class PipelineManager:
             
             if result.returncode == 0:
                 logger.info("Producer batch completed successfully")
-                if "messages_produced" in result.stdout:
-                    # Extract message count if available
-                    lines = result.stdout.split('\n')
-                    for line in lines:
-                        if "Producing" in line or "messages_produced" in line:
-                            logger.info(f"Producer: {line.strip()}")
+                
+                # Combine stdout and stderr for parsing (logging goes to stderr)
+                all_output = result.stdout + "\n" + result.stderr
+                lines = all_output.split('\n')
+                category_found = False
+                
+                for line in lines:
+                    # Log per-category statistics (e.g., "Category 'tech': 50 unique articles")
+                    if "Category '" in line and ("unique articles" in line or "articles" in line):
+                        logger.info(f"Producer: {line.strip()}")
+                        category_found = True
+                    # Log total production count
+                    elif "Producing" in line or "messages_produced" in line:
+                        logger.info(f"Producer: {line.strip()}")
+                    # Log total articles fetched
+                    elif "Total articles fetched:" in line:
+                        logger.info(f"Producer: {line.strip()}")
+                
+                # If no category-specific output found, log generic success
+                if not category_found:
+                    logger.info("Producer: No category-specific output found")
+                    
                 return True
             else:
                 logger.error(f"Producer failed: {result.stderr}")
@@ -173,7 +189,7 @@ class PipelineManager:
             return False
             
     def run_consumer_batch(self) -> bool:
-        """Run consumer to process articles."""
+        """Run consumer to process articles with verbose logging."""
         try:
             cmd = [
                 sys.executable, '-m', 'newsbot.kafka_scraper_async_consumer',
@@ -193,11 +209,14 @@ class PipelineManager:
             
             if result.returncode == 0:
                 logger.info("Consumer batch completed successfully")
-                # Log key metrics
-                lines = result.stdout.split('\n')
+                
+                # Combine stdout and stderr for parsing (logging goes to stderr)
+                all_output = result.stdout + "\n" + result.stderr
+                lines = all_output.split('\n')
+                
                 for line in lines:
                     if any(keyword in line for keyword in 
-                          ['consumed', 'enriched', 'success', 'processed']):
+                          ['consumed', 'enriched', 'success', 'processed', 'metrics']):
                         logger.info(f"Consumer: {line.strip()}")
                 return True
             else:
@@ -212,7 +231,7 @@ class PipelineManager:
             return False
             
     def log_pipeline_stats(self):
-        """Log current pipeline statistics."""
+        """Log current pipeline statistics with verbose per-category tracking."""
         current_stats = self.get_database_stats()
         if not current_stats:
             return
@@ -221,19 +240,51 @@ class PipelineManager:
         logger.info(f"Database: {overall.get('with_full', 0)}/{overall.get('total', 0)} "
                    f"enriched ({overall.get('coverage_pct', 0):.1f}%)")
         
-        # Calculate growth since start
+        # Calculate overall growth
         if self.last_stats:
             last_total = self.last_stats.get('overall', {}).get('total', 0)
             current_total = overall.get('total', 0)
             growth = current_total - last_total
             if growth > 0:
                 logger.info(f"Pipeline growth: +{growth} articles since last check")
-                
-        # Log per-category stats
+        
+        # Expected categories in priority order
+        expected_categories = ['international', 'tech', 'finance', 'arabic', 'science', 'health']
+        
+        # Build category lookup from current stats
         categories = current_stats.get('categories', [])
-        for cat in categories[:3]:  # Top 3 categories
-            logger.info(f"  {cat['category']}: {cat['with_full']}/{cat['total']} "
-                       f"({cat['coverage_pct']:.1f}%)")
+        cat_lookup = {cat['category']: cat for cat in categories}
+        
+        # Build previous category lookup
+        prev_cat_lookup = {}
+        if self.last_stats:
+            for cat in self.last_stats.get('categories', []):
+                prev_cat_lookup[cat['category']] = cat
+        
+        # Log ALL categories with verbose growth tracking
+        logger.info("Per-category statistics:")
+        for cat_name in expected_categories:
+            current_cat = cat_lookup.get(cat_name, {})
+            prev_cat = prev_cat_lookup.get(cat_name, {})
+            
+            current_total = current_cat.get('total', 0)
+            current_full = current_cat.get('with_full', 0)
+            current_coverage = current_cat.get('coverage_pct', 0)
+            
+            prev_total = prev_cat.get('total', 0)
+            
+            # Calculate growth
+            growth = current_total - prev_total
+            
+            # Verbose logging for every category
+            if growth > 0:
+                logger.info(f"  {cat_name}: {current_full}/{current_total} "
+                           f"({current_coverage:.1f}%) [+{growth} new articles]")
+            elif current_total > 0:
+                logger.info(f"  {cat_name}: {current_full}/{current_total} "
+                           f"({current_coverage:.1f}%) [0 new articles]")
+            else:
+                logger.info(f"  {cat_name}: 0/0 (0.0%) [0 new articles]")
                        
         self.last_stats = current_stats
         
@@ -356,8 +407,8 @@ def main():
                        help='Interval between cycles in seconds (default: 600)')
     parser.add_argument('--categories', type=str,
                        help='Comma-separated list of categories (default: all)')
-    parser.add_argument('--max-articles', type=int, default=50,
-                       help='Max articles per batch (default: 50)')
+    parser.add_argument('--max-articles', type=int, default=1000,
+                       help='Max articles per batch (default: 1000)')
     parser.add_argument('--no-restart', action='store_true',
                        help='Disable automatic restart on failure')
     parser.add_argument('--kafka-bootstrap', default='localhost:29092',

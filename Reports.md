@@ -449,6 +449,29 @@ def _migrate_add_full_content(self):
 
 ### 6. Comprehensive Coverage Analysis
 
+### 7. Spark Feature Extraction Pipeline
+
+**Implementation**: Introduced the `SparkProcessor` module (`newsbot/spark_processor.py`) with both batch and Structured Streaming execution paths. The processor reads curated article text from SQLite, applies a Spark ML pipeline (tokenization → stop-word removal → HashingTF → IDF), and persists vector features to the new `processed_articles` table via upserts.
+
+```bash
+# Containerized batch run (October 2, 2025)
+docker compose exec -e PYTHONPATH=/workspace:/workspace/.sparkdeps \
+    spark spark-submit --master local[*] \
+    --name ContainerSparkBatch scripts/run_spark_processor.py --mode batch
+```
+
+**Results** (latest batch):
+- **Articles processed**: 935 rows written to `processed_articles` (all unique).
+- **Token statistics**: Median token count 254, max 2,930.
+- **Runtime**: ~2m 40s on Apache Spark 4.0.1 (container).
+- **Pipeline versioning**: Stored as `spark_v1` for reproducibility.
+
+**Benefits**:
+- Downstream NLP experiments can query precomputed TF-IDF vectors directly from SQLite.
+- Incremental runs use `since_article_id` to avoid reprocessing older rows.
+- Streaming mode enables near-real-time feature availability alongside Kafka enrichment.
+- Dedicated documentation in [`processing.md`](processing.md) captures operational steps, container commands, and troubleshooting.
+
 **Implementation**: Per-category enrichment monitoring and health checks.
 
 ```bash

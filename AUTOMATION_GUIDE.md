@@ -220,4 +220,20 @@ Your automated news pipeline is now running! The system will:
 5. **Monitor** coverage and health
 6. **Continue** automatically at specified intervals
 
+### Optional: Kick off Spark feature extraction
+
+Once a pipeline cycle completes, you can generate TF-IDF vectors for the newly
+enriched articles using the Spark container:
+
+```bash
+docker compose up -d spark
+docker compose exec spark pip install --target /workspace/.sparkdeps numpy  # first run only
+docker compose exec -e PYTHONPATH=/workspace:/workspace/.sparkdeps \
+    spark spark-submit --master local[*] --name ContainerSparkBatch \
+    scripts/run_spark_processor.py --mode batch --since-id <LAST_PROCESSED_ID>
+```
+
+- Replace `<LAST_PROCESSED_ID>` with the latest `articles.id` processed (or omit for full backfill).
+- Streaming mode is also available for continuous feature generation; see [`processing.md`](processing.md) for full instructions.
+
 The database grows continuously with fresh news content, ready for NLP analysis, embedding generation, and RAG applications.

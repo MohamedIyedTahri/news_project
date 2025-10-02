@@ -277,6 +277,37 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:29092 CONCURRENCY=10 python -m newsbot.kafka_s
 KAFKA_BOOTSTRAP_SERVERS=localhost:29092 python -m newsbot.kafka_scraper_consumer --max-messages 5
 ```
 
+### Spark Processor (Batch & Streaming)
+
+The new `SparkProcessor` component converts cleaned article content into token
+features for NLP tasks using Apache Spark. It supports both one-off batch runs
+and micro-batch streaming.
+
+```bash
+# Install required dependency (once per environment)
+pip install pyspark
+
+# Run a local batch job (process all new articles)
+spark-submit \
+    --master local[*] \
+    --name NewsbotSparkProcessor \
+    scripts/run_spark_processor.py --mode batch
+
+# Stream new articles every 5 minutes (exit with CTRL+C)
+spark-submit \
+    --master local[*] \
+    --name NewsbotSparkProcessorStream \
+    scripts/run_spark_processor.py --mode stream --interval 300
+```
+
+**Highlights**
+- Tokenization, stop-word removal, and TF-IDF vectorization handled in Spark
+- Processed features stored in the new `processed_articles` SQLite table
+- Incremental processing via `--since-id` or micro-batch streaming with
+    synthetic triggers
+- Toggle between full article content and RSS summaries with
+    `--prefer-summaries`
+
 ### Performance Monitoring
 
 #### Database Statistics

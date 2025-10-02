@@ -44,6 +44,16 @@ services:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
       SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
 
+  spark:
+    image: apache/spark:4.0.1-python3
+    container_name: spark
+    user: "0:0"
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    command: ["sleep", "infinity"]
+
+
 networks:
   default:
     name: newsbot-kafka-net

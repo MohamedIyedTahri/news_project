@@ -1,6 +1,16 @@
 # Changelog
 
-## [Latest] - October 1, 2025
+## [Latest] - October 2, 2025
+
+### Added
+- **Spark feature extraction pipeline**: `newsbot/spark_processor.py` now documented with a dedicated [`processing.md`](processing.md) guide covering batch/streaming runs, container usage, and troubleshooting.
+- **Container workflow**: `docker-compose` Spark service instructions for running `spark-submit` without local Java setup; added `.sparkdeps` shared dependency cache with numpy preinstall guidance.
+
+### Updated
+- **Documentation refresh**: `README.md`, `architecture.md`, `Reports.md`, and `AUTOMATION_GUIDE.md` now reference the Spark processing stage and link to the new guide.
+- **Operational runbook**: Added optional automation step for generating TF-IDF vectors after ingestion cycles.
+
+## [2025-10-01]
 
 ### Added
 - **Science and Health categories**: Added to main RSS_FEEDS dictionary for continuous monitoring
