@@ -19,7 +19,11 @@ Requirements:
 
 import logging
 import sys
-from typing import List, Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
+
+from sqlalchemy import case, func, select
+
+from newsbot.models import Article as ArticleModel
 
 # Configure detailed logging for the test
 logging.basicConfig(
@@ -55,7 +59,7 @@ class EnrichmentTester:
         """Context manager entry - initialize storage."""
         try:
             self.storage = NewsStorage()
-            logger.info("Connected to SQLite database successfully")
+            logger.info("Connected to database successfully")
             return self
         except Exception as e:
             logger.error(f"Failed to connect to database: {e}")
@@ -74,23 +78,35 @@ class EnrichmentTester:
             stats = self.storage.get_statistics()
             
             # Check full_content coverage
-            cursor = self.storage.conn.execute("""
-                SELECT 
-                    COUNT(*) as total_articles,
-                    COUNT(full_content) as with_full_content,
-                    COUNT(CASE WHEN full_content IS NOT NULL AND length(full_content) > 0 THEN 1 END) as non_empty_full_content
-                FROM articles
-            """)
-            coverage = cursor.fetchone()
+            with self.storage.session_scope() as session:
+                non_empty = func.sum(
+                    case(
+                        (
+                            func.length(
+                                func.trim(func.coalesce(ArticleModel.full_content, ""))
+                            )
+                            > 0,
+                            1,
+                        ),
+                        else_=0,
+                    )
+                )
+                coverage = session.execute(
+                    select(
+                        func.count(ArticleModel.id),
+                        func.count(ArticleModel.full_content),
+                        non_empty,
+                    )
+                ).one()
             
             return {
                 'total_articles': stats.get('total_articles', 0),
                 'by_category': stats.get('by_category', {}),
                 'top_sources': dict(list(stats.get('top_sources', {}).items())[:3]),
                 'full_content_coverage': {
-                    'total': coverage[0] if coverage else 0,
-                    'with_full_content': coverage[1] if coverage else 0,
-                    'non_empty_full_content': coverage[2] if coverage else 0
+                    'total': int(coverage[0] or 0) if coverage else 0,
+                    'with_full_content': int(coverage[1] or 0) if coverage else 0,
+                    'non_empty_full_content': int(coverage[2] or 0) if coverage else 0
                 }
             }
         except Exception as e:
@@ -100,15 +116,28 @@ class EnrichmentTester:
     def get_sample_articles_needing_enrichment(self) -> List[Tuple[int, str, str, str, str, int]]:
         """Get sample articles that need full_content enrichment."""
         try:
-            cursor = self.storage.conn.execute("""
-                SELECT id, title, link, source, category, length(COALESCE(content, '')) as summary_length
-                FROM articles
-                WHERE (full_content IS NULL OR length(full_content) = 0)
-                ORDER BY id DESC
-                LIMIT ?
-            """, (self.sample_limit,))
-            
-            results = cursor.fetchall()
+            with self.storage.session_scope() as session:
+                summary_len = func.length(func.coalesce(ArticleModel.content, "")).label("summary_len")
+                rows = session.execute(
+                    select(
+                        ArticleModel.id,
+                        ArticleModel.title,
+                        ArticleModel.link,
+                        ArticleModel.source,
+                        ArticleModel.category,
+                        summary_len,
+                    )
+                    .where(
+                        (ArticleModel.full_content.is_(None))
+                        | (func.length(func.trim(ArticleModel.full_content)) == 0)
+                    )
+                    .order_by(ArticleModel.id.desc())
+                    .limit(self.sample_limit)
+                ).all()
+            results = [
+                (row.id, row.title, row.link, row.source, row.category, row.summary_len)
+                for row in rows
+            ]
             logger.info(f"Found {len(results)} articles needing enrichment")
             return results
         except Exception as e:
@@ -118,18 +147,23 @@ class EnrichmentTester:
     def get_enriched_articles_sample(self) -> List[Tuple[int, str, str, int, int]]:
         """Get sample of articles that have been enriched."""
         try:
-            cursor = self.storage.conn.execute("""
-                SELECT 
-                    id, title, source, 
-                    length(COALESCE(content, '')) as summary_length,
-                    length(COALESCE(full_content, '')) as full_length
-                FROM articles
-                WHERE full_content IS NOT NULL AND length(full_content) > 0
-                ORDER BY id DESC
-                LIMIT ?
-            """, (3,))
-            
-            return cursor.fetchall()
+            with self.storage.session_scope() as session:
+                rows = session.execute(
+                    select(
+                        ArticleModel.id,
+                        ArticleModel.title,
+                        ArticleModel.source,
+                        func.length(func.coalesce(ArticleModel.content, "")).label("summary_len"),
+                        func.length(func.coalesce(ArticleModel.full_content, "")).label("full_len"),
+                    )
+                    .where(
+                        ArticleModel.full_content.is_not(None),
+                        func.length(func.trim(ArticleModel.full_content)) > 0,
+                    )
+                    .order_by(ArticleModel.id.desc())
+                    .limit(3)
+                ).all()
+            return [(row.id, row.title, row.source, row.summary_len, row.full_len) for row in rows]
         except Exception as e:
             logger.error(f"Error fetching enriched articles: {e}")
             return []

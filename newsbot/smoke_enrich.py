@@ -13,25 +13,27 @@ from __future__ import annotations
 import logging
 from typing import List, Tuple
 
+from sqlalchemy import func, select
+
+from newsbot.models import Article as ArticleModel
 from newsbot.storage import NewsStorage
 from newsbot.main import enrich_database_with_full_articles
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-
 def _fetch_sample_missing(storage: NewsStorage, limit: int = 2) -> List[Tuple[int, str, int]]:
-    cur = storage.conn.execute(
-        """
-        SELECT id, link, length(COALESCE(content,'')) as summary_len
-        FROM articles
-        WHERE (full_content IS NULL OR length(full_content)=0)
-        ORDER BY id DESC
-        LIMIT ?
-        """,
-        (limit,),
-    )
-    return [(r[0], r[1], r[2]) for r in cur.fetchall()]
+    with storage.session_scope() as session:
+        summary_len = func.length(func.coalesce(ArticleModel.content, "")).label("summary_len")
+        rows = session.execute(
+            select(ArticleModel.id, ArticleModel.link, summary_len)
+            .where(
+                (ArticleModel.full_content.is_(None))
+                | (func.length(func.trim(ArticleModel.full_content)) == 0)
+            )
+            .order_by(ArticleModel.id.desc())
+            .limit(limit)
+        ).all()
+    return [(row.id, row.link, row.summary_len) for row in rows]
 
 
 def main():
@@ -49,11 +51,13 @@ def main():
         print(f"Enrichment run stats: {stats}")
 
         # Fetch again for after state
-        cur = storage.conn.execute(
-            "SELECT id, length(full_content) FROM articles WHERE id IN (?,?)",
-            tuple(a[0] for a in sample_before) if len(sample_before) == 2 else (sample_before[0][0], -1),
-        )
-        after_map = {row[0]: row[1] for row in cur.fetchall()}
+        with storage.session_scope() as session:
+            id_values = tuple(a[0] for a in sample_before)
+            rows = session.execute(
+                select(ArticleModel.id, func.length(ArticleModel.full_content).label("full_len"))
+                .where(ArticleModel.id.in_(id_values))
+            ).all()
+            after_map = {row.id: row.full_len for row in rows}
         print("After enrichment:")
         for art_id, link, summary_len in sample_before:
             full_len = after_map.get(art_id)

@@ -11,8 +11,11 @@ import logging
 from collections import defaultdict
 from typing import Dict, Tuple
 
+from sqlalchemy import func, select
+
 from newsbot.feed_policies import build_feed_registry
 from newsbot.main import collect_and_store_articles
+from newsbot.models import Article as ArticleModel
 from newsbot.storage import NewsStorage
 
 # Configure a dedicated logger for the smoke test run
@@ -31,21 +34,23 @@ def _summarize_database(storage: NewsStorage) -> Dict[str, Dict[str, int]]:
     """
     stats = defaultdict(dict)
 
-    # Total number of stored articles in the SQLite database
-    total_rows = storage.conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-    stats["database"]["total_articles"] = total_rows
+    with storage.session_scope() as session:
+        total_rows = session.execute(select(func.count(ArticleModel.id))).scalar_one()
+        stats["database"]["total_articles"] = int(total_rows)
 
-    # How many records have non-empty full_content populated
-    full_count = storage.conn.execute(
-        "SELECT COUNT(*) FROM articles WHERE full_content IS NOT NULL AND length(trim(full_content)) > 0"
-    ).fetchone()[0]
-    stats["database"]["full_content_populated"] = full_count
+        full_count = session.execute(
+            select(func.count(ArticleModel.id)).where(
+                ArticleModel.full_content.is_not(None),
+                func.length(func.trim(ArticleModel.full_content)) > 0,
+            )
+        ).scalar_one()
+        stats["database"]["full_content_populated"] = int(full_count)
 
-    # Category breakdown, useful to verify science/health ingestion
-    for category, count in storage.conn.execute(
-        "SELECT category, COUNT(*) FROM articles GROUP BY category"
-    ).fetchall():
-        stats["categories"][category] = count
+        category_rows = session.execute(
+            select(ArticleModel.category, func.count(ArticleModel.id)).group_by(ArticleModel.category)
+        ).all()
+        for category, count in category_rows:
+            stats["categories"][category or "(uncategorized)"] = int(count)
 
     return stats
 

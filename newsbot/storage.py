@@ -1,91 +1,45 @@
-import sqlite3
-import os
 import logging
-import json
-from datetime import datetime
 from typing import Any, Dict, List, Optional
+import json
+from contextlib import contextmanager
+from datetime import datetime
 
-DB_PATH = "news_articles.db"
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from .db import get_session_factory
+from .models import Article, FullContentStatus, ProcessedArticle
+
+DB_PATH = "news_articles.db"  # Deprecated; preserved for backwards compatibility.
 
 logger = logging.getLogger(__name__)
 
 
 class NewsStorage:
-    def __init__(self, db_path=DB_PATH):
-        # Allow row factory for potential dict-like access
-        self.conn = sqlite3.connect(db_path)
-        self.conn.execute("PRAGMA journal_mode=WAL;")  # better concurrent reads
-        self.create_table()
-        self._migrate_add_full_content()
-        self._ensure_processed_articles_table()
+    """High-level data access layer backed by SQLAlchemy sessions."""
 
-    def create_table(self):
-        """Create base table if it does not exist (initial schema)."""
-        self.conn.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS articles (
-                id INTEGER PRIMARY KEY,
-                title TEXT,
-                link TEXT UNIQUE,
-                publish_date TEXT,
-                source TEXT,
-                category TEXT,
-                content TEXT
-            )
-            '''
-        )
-        self.conn.commit()
+    def __init__(self, database_url: Optional[str] = None, db_path: Optional[str] = None):
+        if database_url:
+            self._session_factory = get_session_factory(database_url)
+        elif db_path:
+            # Explicit SQLite override (legacy support for spark utilities/tests)
+            sqlite_url = f"sqlite:///{db_path}"
+            self._session_factory = get_session_factory(sqlite_url)
+        else:
+            self._session_factory = get_session_factory()
 
-    # --- Schema Migration Helpers -------------------------------------------------
-    def _column_exists(self, table: str, column: str) -> bool:
-        cur = self.conn.execute(f"PRAGMA table_info({table})")
-        for row in cur.fetchall():
-            if row[1] == column:
-                return True
-        return False
-
-    def _migrate_add_full_content(self):
-        """Add full_content column if missing.
-
-        Safely performs idempotent schema migration by checking for column first.
-        """
+    @contextmanager
+    def _session(self) -> Session:
+        session = self._session_factory()
         try:
-            if not self._column_exists("articles", "full_content"):
-                logger.info("Applying migration: adding 'full_content' column to articles table")
-                self.conn.execute("ALTER TABLE articles ADD COLUMN full_content TEXT")
-                self.conn.commit()
-            else:
-                logger.debug("Migration skip: 'full_content' column already present")
-        except Exception as e:
-            logger.error(f"Migration error (add full_content): {e}")
-
-    def _ensure_processed_articles_table(self):
-        """Create processed_articles table for Spark features if missing."""
-        try:
-            self.conn.execute(
-                '''
-                CREATE TABLE IF NOT EXISTS processed_articles (
-                    article_id INTEGER PRIMARY KEY,
-                    token_count INTEGER,
-                    tokens TEXT,
-                    feature_vector TEXT,
-                    pipeline_version TEXT,
-                    processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(article_id) REFERENCES articles(id)
-                )
-                '''
-            )
-            self.conn.commit()
-            # Lightweight index for faster lookups by processed timestamp
-            self.conn.execute(
-                '''
-                CREATE INDEX IF NOT EXISTS idx_processed_articles_processed_at
-                ON processed_articles (processed_at)
-                '''
-            )
-            self.conn.commit()
-        except Exception as exc:
-            logger.error(f"Failed to ensure processed_articles table: {exc}")
+            yield session
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
 
     def save_article(self, article):
         """Insert or update an article.
@@ -102,37 +56,81 @@ class NewsStorage:
             if k not in article:
                 logger.warning(f"save_article missing required field '{k}' for link={article.get('link')} - skipping")
                 return False
-        try:
-            cursor = self.conn.execute(
-                '''
-                INSERT OR IGNORE INTO articles (title, link, publish_date, source, category, content, full_content)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                ''',
-                (
-                    article["title"],
-                    article["link"],
-                    article["publish_date"],
-                    article["source"],
-                    article["category"],
-                    article["content"],
-                    article.get("full_content")
-                ),
-            )
-            inserted = cursor.rowcount > 0
+        desired_status = article.get("full_content_status")
+        status_enum = None
+        if desired_status:
+            try:
+                status_enum = FullContentStatus(desired_status)
+            except ValueError:
+                logger.warning("Unknown full_content_status '%s' for link=%s", desired_status, article.get("link"))
 
-            # If not inserted (duplicate link) and we have new full_content, try updating only if missing
-            if not inserted and article.get("full_content"):
-                self.conn.execute(
-                    '''
-                    UPDATE articles
-                    SET full_content = ?
-                    WHERE link = ? AND (full_content IS NULL OR length(full_content)=0)
-                    ''',
-                    (article.get("full_content"), article["link"]),
-                )
-            self.conn.commit()
+        inserted = False
+        try:
+            with self._session() as session:
+                existing: Article | None = session.execute(
+                    select(Article).where(Article.link == article["link"])
+                ).scalar_one_or_none()
+
+                if existing is None:
+                    record = Article(
+                        title=article["title"],
+                        link=article["link"],
+                        publish_date=article.get("publish_date"),
+                        source=article.get("source"),
+                        category=article.get("category"),
+                        content=article.get("content"),
+                        full_content=article.get("full_content"),
+                        full_content_status=status_enum or (
+                            FullContentStatus.SUCCESS if article.get("full_content") else None
+                        ),
+                    )
+                    session.add(record)
+                    try:
+                        session.flush()
+                        inserted = True
+                    except IntegrityError:
+                        session.rollback()
+                        inserted = False
+                        existing = session.execute(
+                            select(Article).where(Article.link == article["link"])
+                        ).scalar_one_or_none()
+                        if existing is None:
+                            raise
+
+                if existing:
+                    updated = False
+                    if not existing.content and article.get("content"):
+                        existing.content = article.get("content")
+                        updated = True
+                    if article.get("title") and article["title"] != existing.title:
+                        existing.title = article["title"]
+                        updated = True
+                    if article.get("publish_date") and article["publish_date"] != existing.publish_date:
+                        existing.publish_date = article["publish_date"]
+                        updated = True
+                    if article.get("source") and article["source"] != existing.source:
+                        existing.source = article["source"]
+                        updated = True
+                    if article.get("category") and article["category"] != existing.category:
+                        existing.category = article["category"]
+                        updated = True
+
+                    new_full_content = article.get("full_content")
+                    if new_full_content and not existing.full_content:
+                        existing.full_content = new_full_content
+                        if status_enum:
+                            existing.full_content_status = status_enum
+                        else:
+                            existing.full_content_status = FullContentStatus.SUCCESS
+                        updated = True
+                    elif status_enum and existing.full_content_status != status_enum:
+                        existing.full_content_status = status_enum
+                        updated = True
+
+                    if updated:
+                        session.add(existing)
             return inserted
-        except Exception as e:
+        except Exception as e:  # pragma: no cover - defensive logging
             logger.error(f"Error saving article link={article.get('link')}: {e}")
             return False
 
@@ -148,31 +146,38 @@ class NewsStorage:
         processed_at: Optional[str] = None,
     ) -> bool:
         """Upsert processed NLP features for a given article."""
-        processed_at = processed_at or datetime.utcnow().isoformat(timespec="seconds")
+        processed_value = processed_at or datetime.utcnow().isoformat(timespec="seconds")
+        if isinstance(processed_value, str):
+            try:
+                processed_dt = datetime.fromisoformat(processed_value.replace("Z", ""))
+            except ValueError:
+                processed_dt = datetime.utcnow()
+        else:  # pragma: no cover - future-proof for datetime inputs
+            processed_dt = processed_value
         try:
-            self.conn.execute(
-                '''
-                INSERT INTO processed_articles (article_id, token_count, tokens, feature_vector, pipeline_version, processed_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(article_id) DO UPDATE SET
-                    token_count = excluded.token_count,
-                    tokens = excluded.tokens,
-                    feature_vector = excluded.feature_vector,
-                    pipeline_version = excluded.pipeline_version,
-                    processed_at = excluded.processed_at
-                ''',
-                (
-                    article_id,
-                    token_count,
-                    json.dumps(tokens),
-                    json.dumps(feature_vector),
-                    pipeline_version,
-                    processed_at,
-                ),
-            )
-            self.conn.commit()
+            tokens_json = json.dumps(tokens)
+            vector_json = json.dumps(feature_vector)
+            with self._session() as session:
+                existing: ProcessedArticle | None = session.get(ProcessedArticle, article_id)
+                if existing is None:
+                    existing = ProcessedArticle(
+                        article_id=article_id,
+                        token_count=token_count,
+                        tokens=tokens_json,
+                        feature_vector=vector_json,
+                        pipeline_version=pipeline_version,
+                        processed_at=processed_dt,
+                    )
+                    session.add(existing)
+                else:
+                    existing.token_count = token_count
+                    existing.tokens = tokens_json
+                    existing.feature_vector = vector_json
+                    existing.pipeline_version = pipeline_version
+                    existing.processed_at = processed_dt
+                    session.add(existing)
             return True
-        except Exception as exc:
+        except Exception as exc:  # pragma: no cover
             logger.error(f"Error saving processed article id={article_id}: {exc}")
             return False
 
@@ -185,46 +190,45 @@ class NewsStorage:
         prefer_full_content: bool = True,
     ) -> List[Dict[str, Any]]:
         """Return articles prepared for downstream Spark processing."""
-        content_expr = (
-            "COALESCE(NULLIF(full_content, ''), NULLIF(content, ''))"
+        preferred = (
+            func.coalesce(func.nullif(Article.full_content, ""), func.nullif(Article.content, ""))
             if prefer_full_content
-            else "COALESCE(NULLIF(content, ''), NULLIF(full_content, ''))"
+            else func.coalesce(func.nullif(Article.content, ""), func.nullif(Article.full_content, ""))
         )
 
-        query = [
-            "SELECT id, {expr} AS clean_text FROM articles WHERE {expr} IS NOT NULL".format(expr=content_expr)
-        ]
-        params: List[Any] = []
-
-        # Apply minimum content length filter
-        query.append(f"AND length(trim({content_expr})) >= ?")
-        params.append(min_length)
+        trimmed = func.trim(preferred)
+        query = select(Article.id, preferred.label("clean_text")).where(
+            preferred.is_not(None),
+            func.length(trimmed) >= min_length,
+        )
 
         if since_id is not None:
-            query.append("AND id > ?")
-            params.append(since_id)
+            query = query.where(Article.id > since_id)
 
-        query.append("ORDER BY id ASC")
+        query = query.order_by(Article.id.asc())
         if limit is not None:
-            query.append("LIMIT ?")
-            params.append(limit)
+            query = query.limit(limit)
 
-        final_query = "\n".join(query)
         try:
-            cursor = self.conn.execute(final_query, tuple(params))
-            rows = cursor.fetchall()
-            return [{"article_id": row[0], "clean_text": row[1]} for row in rows if row[1]]
-        except Exception as exc:
+            with self._session() as session:
+                rows = session.execute(query).all()
+                return [
+                    {"article_id": row.id, "clean_text": row.clean_text}
+                    for row in rows
+                    if row.clean_text
+                ]
+        except Exception as exc:  # pragma: no cover
             logger.error(f"Error fetching articles for processing: {exc}")
             return []
 
     def get_latest_processed_article_id(self) -> int:
         """Return the highest article id already processed by Spark."""
         try:
-            cursor = self.conn.execute("SELECT COALESCE(MAX(article_id), 0) FROM processed_articles")
-            value = cursor.fetchone()[0]
-            return int(value or 0)
-        except Exception as exc:
+            with self._session() as session:
+                result = session.execute(select(func.coalesce(func.max(ProcessedArticle.article_id), 0)))
+                value = result.scalar_one()
+                return int(value or 0)
+        except Exception as exc:  # pragma: no cover
             logger.error(f"Error retrieving latest processed article id: {exc}")
             return 0
 
@@ -236,26 +240,35 @@ class NewsStorage:
             dict: Statistics about stored articles
         """
         try:
-            # Total articles
-            cursor = self.conn.execute("SELECT COUNT(*) FROM articles")
-            total_articles = cursor.fetchone()[0]
-            
-            # Articles by category
-            cursor = self.conn.execute("SELECT category, COUNT(*) FROM articles GROUP BY category")
-            by_category = dict(cursor.fetchall())
-            
-            # Articles by source
-            cursor = self.conn.execute("SELECT source, COUNT(*) FROM articles GROUP BY source ORDER BY COUNT(*) DESC LIMIT 10")
-            by_source = dict(cursor.fetchall())
-            
-            return {
-                'total_articles': total_articles,
-                'by_category': by_category,
-                'top_sources': by_source
-            }
-        except Exception as e:
+            with self._session() as session:
+                total_articles = session.execute(select(func.count(Article.id))).scalar_one()
+
+                category_rows = session.execute(
+                    select(Article.category, func.count(Article.id)).group_by(Article.category)
+                ).all()
+                by_category = {row.category or "(uncategorized)": row.count_1 for row in category_rows}
+
+                source_rows = session.execute(
+                    select(Article.source, func.count(Article.id))
+                    .group_by(Article.source)
+                    .order_by(func.count(Article.id).desc())
+                    .limit(10)
+                ).all()
+                by_source = {row.source or "(unknown)": row.count_1 for row in source_rows}
+
+                return {
+                    "total_articles": int(total_articles),
+                    "by_category": by_category,
+                    "top_sources": by_source,
+                }
+        except Exception as e:  # pragma: no cover
             print(f"Error getting statistics: {e}")
             return {}
 
     def close(self):
-        self.conn.close()
+        """Provided for backwards compatibility; sessions are scoped per call."""
+        return None
+
+    # Advanced consumers (e.g., backfill jobs) may require direct SQLAlchemy access.
+    def session_scope(self):
+        return self._session()

@@ -30,7 +30,7 @@ A production-ready, scalable Python application that collects news articles from
 ### Development & Analysis
 - **Complete automation framework**: End-to-end pipeline management with health monitoring
 - **Comprehensive logging**: Structured logging with configurable levels
-- **Docker development stack**: Complete Kafka ecosystem with Schema Registry
+- **Docker development stack**: Complete Kafka ecosystem with Schema Registry and optional PostgreSQL persistence layer
 - **Embedding evaluation**: Comparative analysis of CBOW, Skip-gram, and DistilBERT embeddings
 - **Quality assurance**: Smoke tests, integration tests, and manual verification scripts
 
@@ -168,6 +168,31 @@ bash scripts/create_kafka_topics.sh
 KAFKA_BOOTSTRAP_SERVERS=localhost:29092 python -m newsbot.kafka_producer --once
 KAFKA_BOOTSTRAP_SERVERS=localhost:29092 python -m newsbot.kafka_scraper_consumer --max-messages 10
 ```
+
+### 4. PostgreSQL Database (Docker)
+```bash
+# Start the PostgreSQL service with persistent storage
+docker-compose up -d postgres
+```
+
+Set the application to production mode so it connects to PostgreSQL via the ORM layer:
+
+```bash
+export NEWSBOT_ENV=PROD
+export POSTGRES_HOST=localhost        # use newsbot-postgres when running inside Docker
+export POSTGRES_PORT=5432
+export POSTGRES_USER=newsbot
+export POSTGRES_PASSWORD=newsbot
+export POSTGRES_DB=newsbot
+```
+
+Alternatively, provide a full SQLAlchemy URL in a single variable:
+
+```bash
+export DATABASE_URL="postgresql+psycopg2://newsbot:newsbot@localhost:5432/newsbot"
+```
+
+The `postgres` service writes data to the `postgres_data` volume so database state persists across container restarts.
 
 ## Usage Examples
 

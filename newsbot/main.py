@@ -3,11 +3,14 @@ import logging
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
+from sqlalchemy import func, select
+
 from newsbot.cleaner import clean_html
 from newsbot.storage import NewsStorage
 from newsbot.rss_feeds import RSS_FEEDS
 from newsbot.deduplicator import ArticleDeduplicator
 from newsbot.scraper import fetch_full_articles
+from newsbot.models import Article as ArticleModel, FullContentStatus
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -205,43 +208,48 @@ def enrich_database_with_full_articles(storage: NewsStorage, limit: int = 20, mi
     """
     logger.info("Starting enrichment backfill for articles missing full_content")
     try:
-        cursor = storage.conn.execute(
-            """
-            SELECT id, title, link, publish_date, source, category, content, full_content
-            FROM articles
-            WHERE (full_content IS NULL OR length(full_content)=0)
-            ORDER BY id DESC
-            LIMIT ?
-            """,
-            (limit,)
-        )
-        rows = cursor.fetchall()
+        with storage.session_scope() as session:
+            query = (
+                select(ArticleModel)
+                .where(
+                    (ArticleModel.full_content.is_(None))
+                    | (func.length(func.trim(ArticleModel.full_content)) == 0)
+                )
+                .order_by(ArticleModel.id.desc())
+                .limit(limit)
+            )
+            rows = session.execute(query).scalars().all()
+
         if not rows:
             logger.info("No articles require enrichment.")
             return {"requested": 0, "updated": 0}
 
-        rss_style_articles = []
-        for r in rows:
-            rss_style_articles.append({
-                "title": r[1],
-                "link": r[2],
-                "publish_date": r[3] or "",
-                "source": r[4] or "Unknown",
-                "category": r[5] or "uncategorized",
-                "content": r[6] or "",
-            })
+        rss_style_articles = [
+            {
+                "title": row.title,
+                "link": row.link,
+                "publish_date": row.publish_date or "",
+                "source": row.source or "Unknown",
+                "category": row.category or "uncategorized",
+                "content": row.content or "",
+            }
+            for row in rows
+        ]
 
         full_ok, full_fail = fetch_full_articles(rss_style_articles)
         updated = 0
-        for art in full_ok:
-            if len(art.content) < min_full_length:
-                continue
-            storage.conn.execute(
-                "UPDATE articles SET full_content=? WHERE link=? AND (full_content IS NULL OR length(full_content)=0)",
-                (art.content, art.link),
-            )
-            updated += 1
-        storage.conn.commit()
+        with storage.session_scope() as session:
+            for art in full_ok:
+                if len(art.content) < min_full_length:
+                    continue
+                record = session.execute(
+                    select(ArticleModel).where(ArticleModel.link == art.link)
+                ).scalar_one_or_none()
+                if record and not record.full_content:
+                    record.full_content = art.content
+                    record.full_content_status = FullContentStatus.SUCCESS
+                    session.add(record)
+                    updated += 1
 
         stats = {
             "requested": len(rss_style_articles),
