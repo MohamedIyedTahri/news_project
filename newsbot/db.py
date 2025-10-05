@@ -76,7 +76,30 @@ def get_session_factory(database_url: Optional[str] = None) -> sessionmaker:
         return _CACHE[url]
 
     engine = _create_engine(url)
+    # Create any missing tables from current models
     Base.metadata.create_all(engine)
+
+    # Robust SQLite migration: older DB snapshots might lack the `full_content_status` column.
+    # Use the sqlite3 stdlib to directly alter the on-disk DB when necessary so SQLAlchemy
+    # doesn't attempt to SELECT missing columns mapped in the models.
+    try:
+        if url.startswith("sqlite"):
+            # Resolve the actual file path used by SQLite URL
+            sqlite_path = url.replace("sqlite:///", "")
+            import sqlite3
+
+            conn = sqlite3.connect(sqlite_path)
+            try:
+                cur = conn.execute("PRAGMA table_info('articles')")
+                cols = [row[1] for row in cur.fetchall()]
+                if "full_content_status" not in cols:
+                    conn.execute("ALTER TABLE articles ADD COLUMN full_content_status VARCHAR")
+                    conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        # Non-critical: if migration fails, continue and let application surface errors.
+        pass
     factory = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False, future=True)
     _CACHE[url] = factory
     return factory

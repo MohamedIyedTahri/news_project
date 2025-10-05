@@ -18,6 +18,7 @@ A production-ready, scalable Python application that collects news articles from
 - **Advanced text cleaning**: Removes HTML tags, scripts, ads, and excessive whitespace
 - **Smart deduplication**: URL-based and content-based duplicate detection with title similarity matching
 - **Production-ready storage**: SQLite with WAL mode, schema migrations, and upsert capabilities
+- **LLM-powered summarization**: Optional Qwen 7B Instruct integration for concise article summaries
 
 ### Streaming & Scalability
 - **Kafka streaming layer**: Producer/consumer architecture with bootstrap fallback resolution
@@ -147,6 +148,10 @@ pip install feedparser beautifulsoup4 requests
 
 # Install Kafka streaming dependencies (optional)
 pip install -r requirements-kafka.txt
+
+# Install LLM summarization dependencies (optional)
+# GPU users should follow the official PyTorch installation selector for their CUDA version.
+pip install transformers torch bitsandbytes
 ```
 
 ### 2. Basic Mode (No Kafka)
@@ -193,6 +198,65 @@ export DATABASE_URL="postgresql+psycopg2://newsbot:newsbot@localhost:5432/newsbo
 ```
 
 The `postgres` service writes data to the `postgres_data` volume so database state persists across container restarts.
+
+### 5. Optional: Qwen Summarization Support
+```bash
+# Install dependencies (if you skipped this during setup)
+pip install transformers torch bitsandbytes
+
+# Optionally authenticate with the Hugging Face Hub if the model requires it
+huggingface-cli login
+```
+
+Set the following environment variable when you want the demo pipeline (`python -m newsbot.main`) to generate summaries for the latest enriched articles:
+
+```bash
+export NEWSBOT_SUMMARIZE_DEMO=1
+export NEWSBOT_SUMMARIZE_LIMIT=2  # optional, defaults to 1
+```
+
+Running the main script with these variables will call the Qwen2.5-7B-Instruct model for concise summaries.
+
+### Qwen 2.5 model configuration
+
+If you want the project to load the Qwen 2.5 model for summarization, set one of the following environment variables before running the code in `newsbot.llm_qwen`:
+
+- `QWEN_LOCAL_PATH` — path to a local directory containing a Hugging Face-style model checkout (preferred for offline or gated setups).
+- `QWEN_MODEL_NAME` — a Hugging Face model repo id (for example a private organization repo that hosts Qwen 2.5).
+- `HF_TOKEN` or `HUGGINGFACE_TOKEN` — a Hugging Face access token if the model repo is gated/private.
+- `QWEN_ALLOW_FAKE=1` — allow falling back to a lightweight fake model (useful for tests/CI). If unset, the code will raise a clear error when no real model can be loaded.
+
+Common usage examples:
+
+```bash
+# Use a local model directory
+export QWEN_LOCAL_PATH=/path/to/qwen-2.5-local
+python -m newsbot.main
+
+# Use a gated HF repo
+export QWEN_MODEL_NAME=your-org/qwen-2.5b-instruct
+export HF_TOKEN="<your_token>"
+python -m newsbot.main
+
+# Allow fake fallback (tests)
+export QWEN_ALLOW_FAKE=1
+python -m newsbot.main
+```
+
+If the model fails to load, `newsbot.llm_qwen` will print an actionable error describing which candidates were tried and what to set next.
+
+### Quick test: summarize two articles
+
+A small convenience script is included to exercise the summarizer against two sample articles in the project's SQLite DB.
+
+Run it from the project root after activating the `news-env` conda environment:
+
+```bash
+conda activate news-env
+python scripts/test_two_articles_summarize.py
+```
+
+The script will insert two sample articles if the DB has fewer than two articles, then call `newsbot.llm_qwen.summarize_text` on each and print the summaries.
 
 ## Usage Examples
 
@@ -274,6 +338,32 @@ result = collect_and_store_articles(
     batch_enrich_limit=50
 )
 print(f"Pipeline completed: {result}")
+```
+
+#### Summarize Articles with Qwen
+```python
+from newsbot.llm_qwen import summarize_text
+from newsbot.storage import NewsStorage
+from newsbot.models import Article as ArticleModel
+from sqlalchemy import select
+
+storage = NewsStorage()
+with storage.session_scope() as session:
+    article = (
+        session.execute(
+            select(ArticleModel)
+            .where(ArticleModel.full_content.isnot(None))
+            .order_by(ArticleModel.updated_at.desc())
+        )
+        .scalars()
+        .first()
+    )
+
+if article:
+    summary = summarize_text(article.full_content)
+    print(summary)
+
+storage.close()
 ```
 
 ### Streaming Processing (Kafka Mode)

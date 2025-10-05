@@ -1,5 +1,22 @@
 # Changelog
 
+## [2025-10-05] - Local Qwen 2.5 & test harness
+
+### Added
+- `scripts/test_two_articles_summarize.py`: small convenience test that ensures two articles are present (inserts two sample rows if needed) and calls `newsbot.llm_qwen.summarize_text` to verify summarization end-to-end.
+
+### Updated
+- `newsbot/llm_qwen.py`: loader updated to support `QWEN_LOCAL_PATH`, candidate Qwen 2.5 ids, quantized loading with bitsandbytes, and explicit opt-in fake fallback.
+- `newsbot/db.py`: added a safe, lightweight SQLite compatibility routine to add missing schema columns (e.g., `full_content_status`) to older SQLite files when creating engines.
+- `README.md`: documented the new test script and how to run it with `QWEN_LOCAL_PATH` and `NEWSBOT_SQLITE_PATH` environment variables.
+
+### Verification
+- Ran `scripts/test_two_articles_summarize.py` against a fresh `test_articles.db` and confirmed Qwen 2.5 loaded from the local snapshot with 4-bit quantization (bitsandbytes + accelerate). Two sample article summaries were produced successfully.
+
+### Notes
+- For safety no automatic in-place destructive migrations were applied to the primary `news_articles.db`; the test run used `NEWSBOT_SQLITE_PATH=./test_articles.db`. If you want an in-place migration of the main DB, confirm and I will perform it with a backup.
+
+
 ## [Latest] - October 2, 2025
 
 ### Added
