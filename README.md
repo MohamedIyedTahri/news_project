@@ -258,6 +258,56 @@ python scripts/test_two_articles_summarize.py
 
 The script will insert two sample articles if the DB has fewer than two articles, then call `newsbot.llm_qwen.summarize_text` on each and print the summaries.
 
+### Dockerized microservice stack
+
+The repository now ships with a Docker Compose stack that runs the ingestion, enrichment, and Qwen summarization components as separate microservices alongside Kafka, PostgreSQL, and Spark.
+
+**Services**
+
+| Service | Container | Purpose |
+|---------|-----------|---------|
+| `rss-ingest` | Python 3.12 | Polls RSS feeds and produces articles to Kafka (`rss.items`). |
+| `scraper-worker` | Python 3.12 | Consumes `rss.items`, fetches full content, stores it in Postgres, and publishes to `articles.cleaned`. |
+| `qwen-server` | PyTorch CUDA | FastAPI microservice that exposes `POST /summarize`, powered by the local Qwen 2.5 model. |
+
+**Prerequisites**
+
+1. Install Docker and Docker Compose.
+2. If you plan to run the Qwen container, install the NVIDIA Container Toolkit so Docker can access the GPU.
+3. Download the Qwen 2.5 model locally (see "Qwen 2.5 model configuration" above) and export its path:
+
+```bash
+export QWEN_MODEL_PATH=/absolute/path/to/qwen/snapshot
+# Optional: export HF_TOKEN=... if the model requires authentication
+```
+
+**Start the stack**
+
+```bash
+export POSTGRES_USER=newsbot
+export POSTGRES_PASSWORD=newsbot
+export POSTGRES_DB=newsbot
+export PRODUCER_POLL_INTERVAL=300     # optional, defaults to 300s
+export PRODUCER_CATEGORIES="tech,international"  # optional
+
+docker compose up -d zookeeper kafka postgres schema-registry \
+    spark-master spark-worker spark-history-server \
+    rss-ingest scraper-worker qwen-server kafka-ui
+```
+
+The ingestion and worker services automatically target the Dockerized PostgreSQL instance (`NEWSBOT_ENV=PROD`) and the Kafka broker at `kafka:9092`.
+
+**Verify the summarizer**
+
+```bash
+curl -X POST http://localhost:8000/warmup
+curl -X POST http://localhost:8000/summarize \
+    -H "Content-Type: application/json" \
+    -d '{"text": "Short test text", "max_tokens": 64}'
+```
+
+If you prefer to skip the GPU-heavy Qwen container, leave `QWEN_MODEL_PATH` unset and comment out the `qwen-server` entry in `docker-compose.yml`.
+
 ## Usage Examples
 
 ### Automated Pipeline (Production Ready) 🚀

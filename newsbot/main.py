@@ -1,5 +1,6 @@
 import feedparser
 import logging
+import os
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
@@ -343,6 +344,40 @@ def collect_and_store_articles(
     finally:
         storage.close()
 
+
+def summarize_recent_articles(storage: NewsStorage, *, limit: int = 3, max_tokens: int = 200) -> None:
+    """Generate summaries for the most recently updated articles with full content."""
+
+    try:
+        from newsbot.llm_qwen import summarize_text
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        logger.error("summarize_text not available: %s", exc)
+        return
+
+    with storage.session_scope() as session:
+        rows = (
+            session.execute(
+                select(ArticleModel)
+                .where(ArticleModel.full_content.isnot(None))
+                .order_by(ArticleModel.updated_at.desc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+
+    if not rows:
+        logger.info("No articles with full content available to summarize.")
+        return
+
+    logger.info("Generating Qwen summaries for %s articles", len(rows))
+    for article in rows:
+        try:
+            summary = summarize_text(article.full_content or "", max_tokens=max_tokens)
+            logger.info("Summary for '%s': %s", article.title, summary)
+        except Exception as exc:  # pragma: no cover - inference errors are non-fatal
+            logger.warning("Failed to summarize article '%s': %s", article.title, exc)
+
 if __name__ == "__main__":
     try:
         storage = NewsStorage()
@@ -401,6 +436,15 @@ if __name__ == "__main__":
             if full_success:
                 first = full_success[0]
                 print(f"Title: {first.title}\nFull content preview: {first.content[:300]}...")
+                if os.environ.get("NEWSBOT_SUMMARIZE_DEMO"):
+                    try:
+                        limit_env = int(os.environ.get("NEWSBOT_SUMMARIZE_LIMIT", "1"))
+                    except ValueError:
+                        limit_env = 1
+                    logger.info(
+                        "NEWSBOT_SUMMARIZE_DEMO enabled. Generating summaries for recent articles."
+                    )
+                    summarize_recent_articles(storage, limit=max(1, limit_env))
         else:
             print("No tech articles available for enrichment test.")
 
