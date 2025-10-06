@@ -297,6 +297,25 @@ docker compose up -d zookeeper kafka postgres schema-registry \
 
 The ingestion and worker services automatically target the Dockerized PostgreSQL instance (`NEWSBOT_ENV=PROD`) and the Kafka broker at `kafka:9092`.
 
+#### Quick start scripts
+
+When you want to automate the bring-up without memorizing all of the services, use the helper scripts under `scripts/`:
+
+| Script | When to use it | What it does |
+|--------|----------------|---------------|
+| `scripts/quick_run.sh` | First-time or after code changes | Tears down any existing stack, rebuilds the custom Python images, recreates Kafka topics, triggers a one-off fetch, and prints Postgres category counts. |
+| `scripts/quick_run_fast.sh` | Day-to-day restarts | Reuses the cached Docker images (no rebuild), ensures topics exist, optionally triggers a fetch, and prints Postgres counts. Exits early if the cached images are missing. |
+
+```bash
+# Full rebuild (first run / after source changes)
+bash scripts/quick_run.sh
+
+# Fast restart (cached images, skips rebuild)
+bash scripts/quick_run_fast.sh
+```
+
+Both scripts will create a placeholder `models/qwen` folder if you haven't set `QWEN_MODEL_PATH`. Override any environment variable (e.g., `PRODUCER_POLL_INTERVAL`, `POSTGRES_USER`) before invoking the scripts to customize the stack.
+
 **Verify the summarizer**
 
 ```bash
