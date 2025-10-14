@@ -1,12 +1,15 @@
 version: '3.8'
 
 services:
+
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.3
     container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - news-net
 
   kafka:
     image: confluentinc/cp-kafka:7.5.3
@@ -24,28 +27,9 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
-
-  postgres:
-    image: postgres:15
-    container_name: newsbot-postgres
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-newsbot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newsbot}
-      POSTGRES_DB: ${POSTGRES_DB:-newsbot}
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-newsbot}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    networks:
+      - news-net
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.5.3
@@ -57,33 +41,26 @@ services:
     environment:
       SCHEMA_REGISTRY_HOST_NAME: schema-registry
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: 'kafka:9092'
+    networks:
+      - news-net
 
-  spark-master:
-    image: bitnami/spark:3.5.1
-    container_name: spark-master
-    environment:
-      - SPARK_MODE=master
+  postgres:
+    image: postgres:15
+    container_name: newsbot-postgres
     ports:
-      - "8080:8080"
-      - "7077:7077"
-
-  spark-worker:
-    image: bitnami/spark:3.5.1
-    container_name: spark-worker
-    depends_on:
-      - spark-master
+      - "5432:5432"
     environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-    ports:
-      - "8082:8081"
+      POSTGRES_USER: newsbot
+      POSTGRES_PASSWORD: newsbot
+      POSTGRES_DB: newsbot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - news-net
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka-ui
-    depends_on:
-      - kafka
-      - schema-registry
     ports:
       - "8085:8080"
     environment:
@@ -92,62 +69,101 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
       KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
       KAFKA_CLUSTERS_0_SCHEMASCHEMAREGISTRY: http://schema-registry:8081
+    networks:
+      - news-net
+
+  spark-master:
+    image: apache/spark:3.5.1
+    container_name: spark-master
+    entrypoint: ["/bin/bash", "-c", "mkdir -p /tmp/spark/logs && exec /opt/spark/sbin/start-master.sh"]
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    networks:
+      - news-net
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_LOG_DIR: /tmp/spark/logs
+      SPARK_NO_DAEMONIZE: "true"
+    volumes:
+      - ./spark_jobs:/opt/spark/jobs
+      - ./data/delta:/data/delta
+
+  spark-worker:
+    image: apache/spark:3.5.1
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    entrypoint: [
+      "/bin/bash",
+      "-c",
+      "mkdir -p /tmp/spark/logs /tmp/spark/work && exec /opt/spark/sbin/start-worker.sh spark://spark-master:7077"
+    ]
+    networks:
+      - news-net
+    environment:
+      SPARK_WORKER_DIR: /tmp/spark/work
+      SPARK_LOG_DIR: /tmp/spark/logs
+      SPARK_NO_DAEMONIZE: "true"
+    volumes:
+      - ./spark_jobs:/opt/spark/jobs
+      - ./data/delta:/data/delta
 
   spark-history-server:
-    image: bitnami/spark:3.5.1
+    image: apache/spark:3.4.1
     container_name: spark-history-server
     depends_on:
       - spark-master
+    command: ["/opt/spark/sbin/start-history-server.sh"]
     environment:
-      - SPARK_MODE=history-server
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_HISTORY_SERVER_UI_PORT=18080
+      - SPARK_HISTORY_OPTS=-Dspark.history.ui.port=18080
     ports:
       - "18080:18080"
     volumes:
-      - spark-history:/opt/bitnami/spark/history
+      - spark-history:/opt/spark/history
+    networks:
+      - news-net
 
   rss-ingest:
-    build:
-      context: .
-      dockerfile: services/rss_ingest/Dockerfile
+    image: news_project_rss-ingest
     container_name: rss-ingest
     depends_on:
       - kafka
       - postgres
     environment:
-      NEWSBOT_ENV: PROD
-      POSTGRES_HOST: newsbot-postgres
+      POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-newsbot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newsbot}
-      POSTGRES_DB: ${POSTGRES_DB:-newsbot}
+      POSTGRES_USER: newsbot
+      POSTGRES_PASSWORD: newsbot
+      POSTGRES_DB: newsbot
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      PRODUCER_POLL_INTERVAL: ${PRODUCER_POLL_INTERVAL:-300}
-      PRODUCER_CATEGORIES: ${PRODUCER_CATEGORIES:-}
     restart: unless-stopped
+    networks:
+      - news-net
+    volumes:
+      - ./kafka:/app/kafka
 
   scraper-worker:
-    build:
-      context: .
-      dockerfile: services/enrichment_worker/Dockerfile
+    image: news_project_scraper-worker
     container_name: scraper-worker
     depends_on:
       - kafka
       - postgres
     environment:
-      NEWSBOT_ENV: PROD
-      POSTGRES_HOST: newsbot-postgres
+      POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
-      POSTGRES_USER: ${POSTGRES_USER:-newsbot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-newsbot}
-      POSTGRES_DB: ${POSTGRES_DB:-newsbot}
+      POSTGRES_USER: newsbot
+      POSTGRES_PASSWORD: newsbot
+      POSTGRES_DB: newsbot
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      RSS_ITEMS_TOPIC: ${RSS_ITEMS_TOPIC:-rss.items}
-      ARTICLES_CLEANED_TOPIC: ${ARTICLES_CLEANED_TOPIC:-articles.cleaned}
-      ALERTS_TOPIC: ${ALERTS_TOPIC:-alerts.feed_failures}
-      CONSUMER_MAX_MESSAGES: ${CONSUMER_MAX_MESSAGES:-}
+      RSS_ITEMS_TOPIC: rss.items
+      ARTICLES_CLEANED_TOPIC: articles.cleaned
+      ALERTS_TOPIC: alerts.feed_failures
     restart: unless-stopped
+    networks:
+      - news-net
+    volumes:
+      - ./kafka:/app/kafka
 
   qwen-server:
     build:
@@ -159,13 +175,26 @@ services:
     environment:
       QWEN_LOCAL_PATH: /models/qwen
       HF_TOKEN: ${HF_TOKEN:-}
+      NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ${QWEN_MODEL_PATH:?Set QWEN_MODEL_PATH to the local Qwen model snapshot}:/models/qwen:ro
     ports:
-      - "${QWEN_SERVER_PORT:-8000}:8080"
+      - "8000:8080"
     restart: unless-stopped
-    gpus: "all"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - news-net
 
 volumes:
-  spark-history:
   postgres_data:
+  spark-history:
+
+networks:
+  news-net:
+    external: true

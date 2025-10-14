@@ -174,7 +174,43 @@ KAFKA_BOOTSTRAP_SERVERS=localhost:29092 python -m newsbot.kafka_producer --once
 KAFKA_BOOTSTRAP_SERVERS=localhost:29092 python -m newsbot.kafka_scraper_consumer --max-messages 10
 ```
 
-### 4. PostgreSQL Database (Docker)
+To execute the same producer from Docker using the relocated `kafka/` package:
+
+```bash
+# Build the newsbot image if it is not already available
+scripts/run_kafka_producer_docker.sh --once
+
+# Pass any producer flags after the script name, for example:
+scripts/run_kafka_producer_docker.sh --poll 10 --categories tech,international
+```
+
+The helper script automatically mounts `./kafka` into `/app/kafka` and runs inside the
+`news-net` Docker network so it can reach the Kafka brokers defined in `docker-compose*.yml`.
+
+### 4. Delta Lake Streaming Sink (Spark)
+```bash
+# Ensure the stack (including Spark) is running
+docker compose up -d spark-master spark-worker kafka schema-registry rss-ingest scraper-worker
+
+# Start the structured streaming job that writes enriched articles to Delta Lake
+docker compose exec spark-master \
+    /opt/spark/bin/spark-submit \
+    --master spark://spark-master:7077 \
+    --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1 \
+    /opt/spark/jobs/articles_cleaned_to_delta.py
+
+# (Optional) Inspect the latest stored articles
+docker compose exec spark-master \
+    /opt/spark/bin/spark-submit \
+    --master spark://spark-master:7077 \
+    /opt/spark/jobs/show_latest_article.py
+```
+
+Spark containers mount `./spark_jobs` at `/opt/spark/jobs` and persist Delta tables under
+`./data/delta` on the host. Override `DELTA_ARTICLES_PATH`, `DELTA_ARTICLES_CHECKPOINT`, and
+related environment variables if you prefer a different location or want to partition by date.
+
+### 5. PostgreSQL Database (Docker)
 ```bash
 # Start the PostgreSQL service with persistent storage
 docker-compose up -d postgres
@@ -199,7 +235,7 @@ export DATABASE_URL="postgresql+psycopg2://newsbot:newsbot@localhost:5432/newsbo
 
 The `postgres` service writes data to the `postgres_data` volume so database state persists across container restarts.
 
-### 5. Optional: Qwen Summarization Support
+### 6. Optional: Qwen Summarization Support
 ```bash
 # Install dependencies (if you skipped this during setup)
 pip install transformers torch bitsandbytes

@@ -1,9 +1,6 @@
-"""Compatibility wrapper forwarding to `kafka.kafka_scraper_consumer`.""""""Synchronous Kafka consumer that enriches RSS items with full article content.
+"""Synchronous Kafka consumer that enriches RSS items with full article content.
 
-
-
-from kafka.kafka_scraper_consumer import *  # noqa: F401,F403Consumes from topic 'rss.items', fetches full content using existing scraper
-
+Consumes from topic 'rss.items', fetches full content using existing scraper
 logic, stores full content into SQLite, and publishes enriched messages to
 'articles.cleaned'.
 
@@ -20,8 +17,8 @@ import sys
 import time
 from typing import Dict
 
-from .scraper import fetch_full_articles
-from .storage import NewsStorage
+from newsbot.scraper import fetch_full_articles
+from newsbot.storage import NewsStorage
 from .kafka_utils import (
     build_consumer, build_producer, from_json, to_json, now_iso,
     CONSUMER_METRICS, PRODUCER_METRICS, log_metrics, ShutdownFlag, install_signal_handlers
